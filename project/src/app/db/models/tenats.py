@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import func
 
 from app.db.base import Base
 
@@ -20,11 +21,14 @@ class Tenant(Base):
     slug: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     plan: Mapped[str] = mapped_column(String, default="pro")
     api_key_hash: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+
+    llm_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    llm_fallback_1: Mapped[str | None] = mapped_column(String, nullable=True)
     
     # Features flags
     calendar_enabled: Mapped[int] = mapped_column(Integer, default=1)
     email_enabled: Mapped[int] = mapped_column(Integer, default=1)
-    whatsapp_enabled: Mapped[int] = mapped_column(Integer, default=0)
+    whatsapp_enabled: Mapped[int] = mapped_column(Integer, default=1)
     
     # Contacto agente
     agent_email: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -43,8 +47,11 @@ class Tenant(Base):
         String, default=lambda: datetime.now(timezone.utc).isoformat()
     )
     updated_at: Mapped[str] = mapped_column(
-        String, default=lambda: datetime.now(timezone.utc).isoformat()
+        String, 
+        default=lambda: datetime.now(timezone.utc).isoformat(),
+        onupdate=lambda: datetime.now(timezone.utc).isoformat(),
     )
+
 
 
 # ── Smoke Test ─────────────────────────────────────────────────────

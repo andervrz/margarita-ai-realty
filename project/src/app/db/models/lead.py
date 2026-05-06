@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
-
+from sqlalchemy import Index, func
 from app.db.base import Base
 
 
@@ -14,6 +14,10 @@ class Lead(Base):
     """Lead capturado al momento de agendar visita."""
     
     __tablename__ = "leads"
+
+    __table_args__ = (
+        Index("idx_leads_tenant_date", "tenant_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     session_id: Mapped[str] = mapped_column(String, ForeignKey("sessions.id"), nullable=False)
@@ -47,7 +51,9 @@ class Lead(Base):
         String, default=lambda: datetime.now(timezone.utc).isoformat()
     )
     updated_at: Mapped[str] = mapped_column(
-        String, default=lambda: datetime.now(timezone.utc).isoformat()
+        String, 
+        default=lambda: datetime.now(timezone.utc).isoformat(),
+        onupdate=lambda: datetime.now(timezone.utc).isoformat(),
     )
 
 

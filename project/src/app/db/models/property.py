@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
-
+from sqlalchemy import Index, func
 from app.db.base import Base
 
 
@@ -14,6 +14,13 @@ class Property(Base):
     """Propiedad del catálogo de un tenant."""
     
     __tablename__ = "properties"
+
+    __table_args__ = (
+        Index("idx_properties_tenant_status", "tenant_id", "status"),
+        Index("idx_properties_tenant_type", "tenant_id", "property_type"),
+        Index("idx_properties_external_id", "tenant_id", "external_id"),
+        Index("idx_properties_hash", "tenant_id", "property_hash"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), nullable=False)
@@ -50,8 +57,8 @@ class Property(Base):
     capacidad_huespedes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     
     # Contenido
-    amenities: Mapped[str | None] = mapped_column(String, nullable=True)  # JSON
-    photos: Mapped[str | None] = mapped_column(String, nullable=True)  # JSON URLs
+    amenities: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+    photos: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON URLs
     description_es: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_embed_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -60,8 +67,11 @@ class Property(Base):
         String, default=lambda: datetime.now(timezone.utc).isoformat()
     )
     updated_at: Mapped[str] = mapped_column(
-        String, default=lambda: datetime.now(timezone.utc).isoformat()
+        String, 
+        default=lambda: datetime.now(timezone.utc).isoformat(),
+        onupdate=lambda: datetime.now(timezone.utc).isoformat(),
     )
+
 
 
 # ── Smoke Test ─────────────────────────────────────────────────────

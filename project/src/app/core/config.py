@@ -6,14 +6,13 @@ Nunca hardcodeadas. Validación en producción para variables críticas.
 """
 
 import os
+import re
 from functools import lru_cache
-
-from dotenv import load_dotenv
-from pydantic import Field, ValidationError
+from pydantic import Field, field_validator, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Carga explícita de .env al importar este módulo
-load_dotenv()
+
+
 
 
 class Settings(BaseSettings):
@@ -79,6 +78,15 @@ class Settings(BaseSettings):
     rate_limit_per_tenant: str = Field(default="60/minute")
     rate_limit_per_ip: str = Field(default="120/minute")
 
+    # ── Validators ────────────────────────────────────────
+    @field_validator("rate_limit_per_tenant", "rate_limit_per_ip")
+    @classmethod
+    def validate_rate_limit_format(cls, v: str) -> str:
+        import re
+        if not re.match(r"^\d+/(second|minute|hour)$", v):
+            raise ValueError(f"Rate limit debe ser formato '60/minute', recibido: {v}")
+        return v
+
     def validate_production(self) -> None:
         """Falla en producción si faltan variables críticas."""
         if self.app_env != "production":
@@ -89,9 +97,7 @@ class Settings(BaseSettings):
         if not self.secret_key:
             missing.append("SECRET_KEY")
         if missing:
-            raise ValidationError(
-                f"Variables faltantes en .env: {', '.join(missing)}"
-            )
+            raise ValueError(f"Variables de entorno faltantes en producción: {', '.join(missing)}")
 
 
 @lru_cache

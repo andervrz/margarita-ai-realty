@@ -7,6 +7,8 @@ Configuración:
 - Foreign keys: activadas por defecto
 """
 
+from requests import session
+
 import sqlite_vec
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -54,6 +56,8 @@ async def get_async_session():
 # ── Smoke Test ─────────────────────────────────────────────────────
 if __name__ == "__main__":
     import asyncio
+    from sqlalchemy import text
+
     
     async def _test():
         print("🔥 Smoke Test — db/engine.py")
@@ -69,7 +73,9 @@ if __name__ == "__main__":
         # Test conexión real
         async with AsyncSessionLocal() as session:
             # Verificar WAL mode
-            result = await session.execute("PRAGMA journal_mode")
+            result = await session.execute(text("PRAGMA journal_mode"))
+            result = await session.execute(text("PRAGMA foreign_keys"))
+            result = await session.execute(text("SELECT vec_version()"))
             mode = result.scalar()
             assert mode == "wal", f"WAL no activo: {mode}"
             print(f"  ✅ WAL mode activo: {mode}")

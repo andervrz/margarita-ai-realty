@@ -1,0 +1,110 @@
+# pyproject.toml — margarita-ai-realty
+# Stack: FastAPI + SQLAlchemy async + sqlite-vec + sentence-transformers + LiteLLM
+# Package manager: uv
+# Python: 3.12+
+#
+# Comandos de setup:
+#   uv venv                  → crea .venv en la raíz del proyecto
+#   uv sync                  → instala dependencias de producción
+#   uv sync --group dev      → instala producción + testing
+#   uv run pytest            → ejecuta tests dentro del venv
+ 
+[project]
+name = "margarita-ai-realty"
+version = "1.0.0"
+description = "AI-powered conversational assistant for real estate in Margarita Island"
+requires-python = ">=3.12"
+ 
+dependencies = [
+    # ── Backend Core ─────────────────────────────────────────────
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "python-multipart>=0.0.12",     # para file uploads en FastAPI (CSV ingestion)
+    "structlog>=24.4.0",
+    "slowapi>=0.1.9",
+ 
+    # ── Base de datos — Stack unificado SQLite + sqlite-vec ───────
+    "sqlalchemy[asyncio]>=2.0.36",
+    "aiosqlite>=0.20.0",
+    "alembic>=1.14.0",
+    "sqlite-vec>=0.1.6",            # vector search nativo en SQLite (reemplaza ChromaDB)
+    "asyncpg>=0.30.0",              # driver PostgreSQL async (producción futura)
+ 
+    # ── LLM & AI ─────────────────────────────────────────────────
+    "litellm>=1.55.0",              # gateway unificado Groq + Gemini
+    "sentence-transformers>=3.3.0", # embeddings locales ES/EN (reemplaza Ollama)
+    "pandas>=2.2.0",                # CSV/Excel parsing para ingestion
+    "openpyxl>=3.1.0",             # soporte .xlsx en pandas
+ 
+    # ── Comunicaciones Async ──────────────────────────────────────
+    "aiosmtplib>=3.0.2",           # email async (no bloquea event loop)
+    "httpx>=0.28.0",               # WhatsApp Cloud API + HTTP externo async
+    "google-api-python-client>=2.154.0",  # Google Calendar SDK
+    "google-auth>=2.37.0",          # autenticación Google (Service Account)
+    "google-auth-httplib2>=0.2.0",  # soporte httplib2 para google-auth
+ 
+    # ── Seguridad ────────────────────────────────────────────────
+    "passlib[bcrypt]>=1.7.4",      # bcrypt para hashing de passwords admin
+]
+ 
+[dependency-groups]
+dev = [
+    # ── Testing ───────────────────────────────────────────────────
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",           # cobertura de tests
+    "httpx>=0.28.0",               # AsyncClient para tests de FastAPI endpoints
+ 
+    # ── Calidad de código ─────────────────────────────────────────
+    "ruff>=0.8.0",                 # linter + formatter (reemplaza black + flake8)
+    "mypy>=1.13.0",                # type checking estático
+ 
+    # ── Debugging y desarrollo ────────────────────────────────────
+    "rich>=13.9.0",                # output bonito en terminal (útil en smoke tests)
+]
+ 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"              # todos los tests async sin @pytest.mark.asyncio
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",                          # verbose
+    "--tb=short",                  # traceback corto en fallos
+    "--strict-markers",            # falla si hay markers no registrados
+]
+ 
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+]
+ignore = [
+    "E501", # line too long (ruff format lo maneja)
+    "B008", # do not perform function calls in default arguments (FastAPI usa esto)
+]
+ 
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+ 
+[tool.mypy]
+python_version = "3.12"
+strict = false
+ignore_missing_imports = true      # para librerías sin stubs
+ 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+ 
+[tool.hatch.build.targets.wheel]
+packages = ["src/app"]

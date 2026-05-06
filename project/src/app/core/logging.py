@@ -10,6 +10,7 @@ import sys
 
 import structlog
 
+_logging_configured = False
 
 def setup_logging(app_env: str = "development", log_level: str = "INFO") -> None:
     """Configura structlog con processors según el entorno.
@@ -18,6 +19,11 @@ def setup_logging(app_env: str = "development", log_level: str = "INFO") -> None
         app_env: "development" o "production"
         log_level: "DEBUG", "INFO", "WARNING", "ERROR"
     """
+    global _logging_configured
+    if _logging_configured:
+        return  # Evitar reconfiguración múltiple
+    _logging_configured = True
+
     level = getattr(logging, log_level.upper(), logging.INFO)
     
     # Processors comunes para ambos entornos
@@ -25,6 +31,8 @@ def setup_logging(app_env: str = "development", log_level: str = "INFO") -> None
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
+        structlog.processors.PositionalArgumentsFormatter(),
+        structlog.processors.StackInfoRenderer(),
         structlog.processors.TimeStamper(fmt="iso"),
     ]
     
@@ -52,7 +60,7 @@ def setup_logging(app_env: str = "development", log_level: str = "INFO") -> None
     )
 
 
-def get_logger(name: str = __name__):
+def get_logger(name: str = __name__) -> structlog.BoundLogger:
     """Retorna un logger structlog con nombre."""
     return structlog.get_logger(name)
 

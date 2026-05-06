@@ -8,8 +8,7 @@ from enum import Enum
 
 
 class Plan(str, Enum):
-    """Planes de suscripción disponibles."""
-    STARTER = "starter"
+    BASIC = "basic"       
     STANDARD = "standard"
     PRO = "pro"
 
