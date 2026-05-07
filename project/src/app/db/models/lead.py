@@ -4,11 +4,12 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import Index, func
+from sqlalchemy import Boolean
 from app.db.base import Base
-
+from app.core.constants import LeadStatus
 
 class Lead(Base):
     """Lead capturado al momento de agendar visita."""
@@ -16,8 +17,12 @@ class Lead(Base):
     __tablename__ = "leads"
 
     __table_args__ = (
-        Index("idx_leads_tenant_date", "tenant_id", "created_at"),
-    )
+    Index("idx_leads_tenant_date", "tenant_id", "created_at"),
+    CheckConstraint(
+        "status IN ('pendiente', 'confirmado', 'cancelado')",
+        name="ck_lead_status"
+    ),
+)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     session_id: Mapped[str] = mapped_column(String, ForeignKey("sessions.id"), nullable=False)
@@ -39,8 +44,9 @@ class Lead(Base):
     
     # Calificación
     qualification_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    is_international: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String, default="pendiente")
+    is_international: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default=LeadStatus.PENDIENTE.value)
+
     
     # Tracking
     calendar_event_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -53,7 +59,6 @@ class Lead(Base):
     updated_at: Mapped[str] = mapped_column(
         String, 
         default=lambda: datetime.now(timezone.utc).isoformat(),
-        onupdate=lambda: datetime.now(timezone.utc).isoformat(),
     )
 
 

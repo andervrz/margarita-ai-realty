@@ -70,6 +70,13 @@ class NotificationChannel(str, Enum):
     EMAIL = "email"
 
 
+class IngestionStatus(str, Enum):
+    """Estados del proceso de ingestion de CSV."""
+    PENDING = "pending"
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
 # ── Zonas de Margarita (para referencia en signals.py) ───────────
 
 MARGARITA_ZONES = {
