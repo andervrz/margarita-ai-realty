@@ -7,12 +7,11 @@ Configuración:
 - Foreign keys: activadas por defecto
 """
 
-from requests import session
 
 import sqlite_vec
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from collections.abc import AsyncGenerator
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -46,9 +45,7 @@ def _configure_sqlite(dbapi_connection, connection_record):
     sqlite_vec.load(dbapi_connection)
     dbapi_connection.enable_load_extension(False)
 
-
-async def get_async_session():
-    """Dependency injection: yield de sesión async."""
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
 
@@ -69,29 +66,21 @@ if __name__ == "__main__":
         # Test AsyncSessionLocal
         assert AsyncSessionLocal is not None
         print("  ✅ Session maker configurado")
-        
+
+
         # Test conexión real
         async with AsyncSessionLocal() as session:
-            # Verificar WAL mode
-            result = await session.execute(text("PRAGMA journal_mode"))
-            result = await session.execute(text("PRAGMA foreign_keys"))
-            result = await session.execute(text("SELECT vec_version()"))
-            mode = result.scalar()
-            assert mode == "wal", f"WAL no activo: {mode}"
-            print(f"  ✅ WAL mode activo: {mode}")
-            
-            # Verificar foreign keys
-            result = await session.execute("PRAGMA foreign_keys")
-            fk = result.scalar()
+            wal = (await session.execute(text("PRAGMA journal_mode"))).scalar()
+            fk = (await session.execute(text("PRAGMA foreign_keys"))).scalar()
+            vec = (await session.execute(text("SELECT vec_version()"))).scalar()
+    
+            assert wal == "wal", f"WAL no activo: {wal}"
             assert fk == 1, f"FK no activas: {fk}"
-            print(f"  ✅ Foreign keys activas: {fk}")
+            assert vec is not None
             
-            # Verificar sqlite-vec cargado
-            result = await session.execute("SELECT vec_version()")
-            version = result.scalar()
-            assert version is not None
-            print(f"  ✅ sqlite-vec cargado: v{version}")
-        
+            print(f"  ✅ WAL mode: {wal}")
+            print(f"  ✅ Foreign keys: {fk}")
+            print(f"  ✅ sqlite-vec: v{vec}")
         print("\n🎉 Todos los smoke tests pasaron")
     
     asyncio.run(_test())

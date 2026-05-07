@@ -12,6 +12,12 @@ from passlib.context import CryptContext
 # Contexto bcrypt para hashing de passwords/secrets
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+def hash_api_key(api_key: str, secret_key: str) -> str:
+    return hmac.new(
+        secret_key.encode(),
+        api_key.encode(),
+        hashlib.sha256
+    ).hexdigest()
 
 def hash_api_key(api_key: str) -> str:
     """Hash de API key con SHA-256 para lookup en base de datos.
@@ -23,8 +29,10 @@ def hash_api_key(api_key: str) -> str:
 
 
 def verify_api_key(plain_api_key: str, hashed_api_key: str) -> bool:
-    """Verifica si un API key plano coincide con su hash."""
-    return hash_api_key(plain_api_key) == hashed_api_key
+    return secrets.compare_digest(
+        hash_api_key(plain_api_key),
+        hashed_api_key
+    )
 
 
 def generate_api_key() -> str:
