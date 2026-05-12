@@ -20,9 +20,8 @@ class Lead(Base):
     Index("idx_leads_tenant_date", "tenant_id", "created_at"),
     CheckConstraint(
         "status IN ('pendiente', 'confirmado', 'cancelado')",
-        name="ck_lead_status"
-    ),
-)
+        name="ck_lead_status"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     session_id: Mapped[str] = mapped_column(String, ForeignKey("sessions.id"), nullable=False)
