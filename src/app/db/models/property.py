@@ -4,9 +4,9 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Float, CheckConstraint, ForeignKey, Integer, String, Text, Numeric
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import Index, func
+from sqlalchemy import Index, Boolean, func
 from src.app.db.base import Base
 
 
@@ -20,6 +20,8 @@ class Property(Base):
         Index("idx_properties_tenant_type", "tenant_id", "property_type"),
         Index("idx_properties_external_id", "tenant_id", "external_id"),
         Index("idx_properties_hash", "tenant_id", "property_hash"),
+        CheckConstraint("status IN ('disponible', 'reservada', 'vendida')",name="ck_property_status"),
+        CheckConstraint("property_type IN ('venta', 'arriendo', 'vacacional', 'local', 'posada', 'hotel', 'planos', 'terreno')",name="ck_property_type"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -32,11 +34,11 @@ class Property(Base):
     # Básicos
     title: Mapped[str] = mapped_column(String, nullable=False)
     property_type: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, default="disponible")
+    status: Mapped[str] = mapped_column(String, nullable=False, default=PropertyStatus.DISPONIBLE.value)
     
     # Precios
-    price_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
-    price_bs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_usd: Mapped[float | None] = mapped_column(Numeric(precision=12, scale=2), nullable=True)
+    price_bs: Mapped[float | None] = mapped_column(Numeric(precision=16, scale=2), nullable=True))
     
     # Ubicación
     location_city: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -50,9 +52,9 @@ class Property(Base):
     parking_spots: Mapped[int | None] = mapped_column(Integer, nullable=True)
     
     # Específicos Margarita
-    vista_al_mar: Mapped[int] = mapped_column(Integer, default=0)
-    frente_playa: Mapped[int] = mapped_column(Integer, default=0)
-    uso_vacacional: Mapped[int] = mapped_column(Integer, default=0)
+    vista_al_mar: Mapped[int] = mapped_column(Boolean, default=0)
+    frente_playa: Mapped[int] = mapped_column(Boolean, default=0)
+    uso_vacacional: Mapped[int] = mapped_column(Boolean, default=0)
     tipo_especial: Mapped[str | None] = mapped_column(String, nullable=True)
     capacidad_huespedes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     
@@ -69,7 +71,6 @@ class Property(Base):
     updated_at: Mapped[str] = mapped_column(
         String, 
         default=lambda: datetime.now(timezone.utc).isoformat(),
-        onupdate=lambda: datetime.now(timezone.utc).isoformat(),
     )
 
 
@@ -88,8 +89,8 @@ if __name__ == "__main__":
         bedrooms=3,
     )
     assert p.title == "Apartamento 3H/2B en Pampatar"
-    assert p.vista_al_mar == 1
-    assert p.frente_playa == 0  # default
+    assert p.vista_al_mar == True
+    assert p.frente_playa == False  # default
     assert p.status == "disponible"
     print(f"  ✅ Property creada: {p.title} (${p.price_usd})")
     print("\n🎉 Smoke test pasó")
