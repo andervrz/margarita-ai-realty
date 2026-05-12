@@ -2,11 +2,11 @@
 """Pipeline completo: parse → hash → upsert SQLite → embed sqlite-vec."""
 
 import json
-from typing import List
-
+from datetime import datetime, timezone
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.ingestion_log import IngestionLog
+from src.app.db.models.ingestion_log import IngestionLog
 from src.app.db.models.property import Property
 from src.app.ingestion.embedder import embed_text, generate_raw_embed_text
 from src.app.ingestion.hasher import file_checksum, property_hash
@@ -71,7 +71,7 @@ class IngestionPipeline:
         
         # 3. Upsert propiedades
         stats = {"inserted": 0, "updated": 0, "skipped": 0, "failed": 0}
-        insert_errors: List[str] = []
+        insert_errors: list[str] = []
         
         for row in valid_rows:
             try:
@@ -80,8 +80,7 @@ class IngestionPipeline:
                 stats["failed"] += 1
                 insert_errors.append(f"{row.title}: {str(e)}")
         
-        await session.commit()
-        
+            
         # 4. Log del proceso
         total_errors = parse_errors + insert_errors
         status = (
@@ -126,8 +125,7 @@ class IngestionPipeline:
         stats: dict,
     ) -> None:
         """Inserta o actualiza una propiedad según su hash."""
-        from sqlalchemy import select
-        
+               
         # Generar hash de la fila
         row_dict = row.model_dump()
         row_dict["tenant_id"] = tenant_id
@@ -169,6 +167,7 @@ class IngestionPipeline:
                     setattr(existing, key, value)
             existing.property_hash = new_hash
             existing.raw_embed_text = raw_text
+            existing.updated_at = datetime.now(timezone.utc).isoformat()
             stats["updated"] += 1
         else:
             # Insert
