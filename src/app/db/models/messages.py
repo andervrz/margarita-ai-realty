@@ -4,7 +4,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import CheckConstraint, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import Index
 from src.app.db.base import Base
@@ -18,6 +18,9 @@ class Message(Base):
     __table_args__ = (
         Index("idx_messages_session", "session_id"),
         Index("idx_messages_tenant_date", "tenant_id", "created_at"),
+        CheckConstraint(
+        "role IN ('user', 'assistant')",
+        name="ck_message_role"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
