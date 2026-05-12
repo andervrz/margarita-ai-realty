@@ -76,6 +76,7 @@ class IngestionStatus(str, Enum):
     SUCCESS = "success"
     PARTIAL = "partial"
     FAILED = "failed"
+    SKIPPED = "skipped"
 
 # ── Zonas de Margarita (para referencia en signals.py) ───────────
 
