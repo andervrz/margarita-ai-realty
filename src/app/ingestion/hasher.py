@@ -10,6 +10,12 @@ def file_checksum(file_content: bytes) -> str:
     """SHA-256 del contenido completo del archivo."""
     return hashlib.sha256(file_content).hexdigest()
 
+# Campos que no forman parte de la identidad de una propiedad
+_HASH_EXCLUDED_FIELDS = frozenset({
+    "id", "created_at", "updated_at",
+    "property_hash", "raw_embed_text",
+    "chroma_doc_id",  # si aplica en el futuro
+})
 
 def property_hash(row_data: dict[str, Any]) -> str:
     """SHA-256 de los datos de una propiedad para detectar cambios.
@@ -19,7 +25,7 @@ def property_hash(row_data: dict[str, Any]) -> str:
     # Normalizar: solo campos relevantes, ordenados, sin None
     normalized = {
         k: v for k, v in sorted(row_data.items())
-        if v is not None and k not in ("created_at", "updated_at", "id")
+        if v is not None and k not in _HASH_EXCLUDED_FIELDS
     }
     content = json.dumps(normalized, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
