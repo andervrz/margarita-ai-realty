@@ -8,7 +8,7 @@ from sqlalchemy import Float, CheckConstraint, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import Index, Boolean, func
 from src.app.db.base import Base
-
+from src.app.core.constants import PropertyType, PropertyStatus
 
 class Property(Base):
     """Propiedad del catálogo de un tenant."""
@@ -38,7 +38,7 @@ class Property(Base):
     
     # Precios
     price_usd: Mapped[float | None] = mapped_column(Numeric(precision=12, scale=2), nullable=True)
-    price_bs: Mapped[float | None] = mapped_column(Numeric(precision=16, scale=2), nullable=True))
+    price_bs: Mapped[float | None] = mapped_column(Numeric(precision=16, scale=2), nullable=True)
     
     # Ubicación
     location_city: Mapped[str | None] = mapped_column(String, nullable=True)
