@@ -4,10 +4,9 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Integer, String
+from sqlalchemy import CheckConstraint, Integer, String, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import func
-
+from src.app.core.constants import Plan
 from src.app.db.base import Base
 
 
@@ -15,6 +14,13 @@ class Tenant(Base):
     """Cliente inmobiliario con configuración aislada."""
     
     __tablename__ = "tenants"
+    
+    __table_args__ = (
+    CheckConstraint(
+        "plan IN ('basic', 'standard', 'pro')",
+        name="ck_tenant_plan"
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String, nullable=False)
@@ -22,13 +28,15 @@ class Tenant(Base):
     plan: Mapped[str] = mapped_column(String, default="pro")
     api_key_hash: Mapped[str] = mapped_column(String, unique=True, nullable=False)
 
+    # LLM — override por tenant (V1: llm_model opcional, fallbacks para V2)
     llm_model: Mapped[str | None] = mapped_column(String, nullable=True)
     llm_fallback_1: Mapped[str | None] = mapped_column(String, nullable=True)
+    llm_fallback_2: Mapped[str | None] = mapped_column(String, nullable=True)
     
     # Features flags
-    calendar_enabled: Mapped[int] = mapped_column(Integer, default=1)
-    email_enabled: Mapped[int] = mapped_column(Integer, default=1)
-    whatsapp_enabled: Mapped[int] = mapped_column(Integer, default=1)
+    calendar_enabled: Mapped[int] = mapped_column(Boolean, default=True)
+    email_enabled: Mapped[int] = mapped_column(Boolean, default=True)
+    whatsapp_enabled: Mapped[int] = mapped_column(Boolean, default=True)
     
     # Contacto agente
     agent_email: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -41,7 +49,7 @@ class Tenant(Base):
     visit_duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
     allowed_origins: Mapped[str | None] = mapped_column(String, nullable=True)  # JSON array
     
-    is_active: Mapped[int] = mapped_column(Integer, default=1)
+    is_active: Mapped[int] = mapped_column(Boolean, default=True)
     
     created_at: Mapped[str] = mapped_column(
         String, default=lambda: datetime.now(timezone.utc).isoformat()
@@ -49,7 +57,6 @@ class Tenant(Base):
     updated_at: Mapped[str] = mapped_column(
         String, 
         default=lambda: datetime.now(timezone.utc).isoformat(),
-        onupdate=lambda: datetime.now(timezone.utc).isoformat(),
     )
 
 
