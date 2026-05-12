@@ -34,9 +34,9 @@ class Tenant(Base):
     llm_fallback_2: Mapped[str | None] = mapped_column(String, nullable=True)
     
     # Features flags
-    calendar_enabled: Mapped[int] = mapped_column(Boolean, default=True)
-    email_enabled: Mapped[int] = mapped_column(Boolean, default=True)
-    whatsapp_enabled: Mapped[int] = mapped_column(Boolean, default=True)
+    calendar_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    email_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     
     # Contacto agente
     agent_email: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -49,7 +49,7 @@ class Tenant(Base):
     visit_duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
     allowed_origins: Mapped[str | None] = mapped_column(String, nullable=True)  # JSON array
     
-    is_active: Mapped[int] = mapped_column(Boolean, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
     created_at: Mapped[str] = mapped_column(
         String, default=lambda: datetime.now(timezone.utc).isoformat()
