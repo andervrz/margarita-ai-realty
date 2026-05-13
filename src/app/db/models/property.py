@@ -52,9 +52,9 @@ class Property(Base):
     parking_spots: Mapped[int | None] = mapped_column(Integer, nullable=True)
     
     # Específicos Margarita
-    vista_al_mar: Mapped[int] = mapped_column(Boolean, default=0)
-    frente_playa: Mapped[int] = mapped_column(Boolean, default=0)
-    uso_vacacional: Mapped[int] = mapped_column(Boolean, default=0)
+    vista_al_mar: Mapped[bool] = mapped_column(Boolean, default=0)
+    frente_playa: Mapped[bool] = mapped_column(Boolean, default=0)
+    uso_vacacional: Mapped[bool] = mapped_column(Boolean, default=0)
     tipo_especial: Mapped[str | None] = mapped_column(String, nullable=True)
     capacidad_huespedes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     
