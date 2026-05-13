@@ -72,9 +72,9 @@ if __name__ == "__main__":
     )
     assert t.name == "Esparta Inmuebles"
     assert t.plan == "pro"
-    assert t.calendar_enabled == 1
+    assert t.calendar_enabled == True
     assert t.visit_duration_minutes == 60
-    assert t.is_active == 1
+    assert t.is_active == True
     assert len(t.id) == 36  # UUID
     print(f"  ✅ Tenant creado: {t.name} (plan={t.plan})")
     print("\n🎉 Smoke test pasó")
