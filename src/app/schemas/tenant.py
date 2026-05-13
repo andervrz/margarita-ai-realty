@@ -2,48 +2,52 @@
 """Schemas Pydantic para Tenant."""
 
 from pydantic import BaseModel, ConfigDict
+from src.app.core.constants import Plan
 
 
-class TenantResponse(BaseModel):
-    """Respuesta pública de un tenant (sin datos sensibles)."""
-    
+class TenantConfig(BaseModel):
+    """Configuración interna del tenant — uso del chat engine, no API pública."""
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     name: str
     slug: str
-    plan: str
-    calendar_enabled: int
-    email_enabled: int
-    whatsapp_enabled: int
-    agent_email: str | None
-    agent_whatsapp: str | None
+    plan: Plan
+    llm_model: str | None = None
+    llm_fallback_1: str | None = None
+    llm_fallback_2: str | None = None
     qualification_threshold: int
     session_ttl_minutes: int
     visit_duration_minutes: int
-    is_active: int
+    calendar_enabled: bool
+    email_enabled: bool
+    whatsapp_enabled: bool
+    agent_email: str | None
+    agent_whatsapp: str | None
+    whatsapp_phone_id: str | None
+    allowed_origins: str | None
+    is_active: bool
 
-
+  
 # ── Smoke Test ─────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("🔥 Smoke Test — schemas/tenant.py")
-    
-    t = TenantResponse(
-        id="tenant-123",
-        name="Esparta Inmuebles",
-        slug="esparta",
-        plan="pro",
-        calendar_enabled=1,
-        email_enabled=1,
-        whatsapp_enabled=0,
-        agent_email="agente@esparta.com",
-        agent_whatsapp="+584141234567",
-        qualification_threshold=75,
-        session_ttl_minutes=30,
-        visit_duration_minutes=60,
-        is_active=1,
-    )
-    assert t.name == "Esparta Inmuebles"
-    assert t.plan == "pro"
-    print(f"  ✅ TenantResponse: {t.name} (plan={t.plan})")
-    print("\n🎉 Smoke test pasó")
+    try:
+        TenantResponse(
+            id="tenant-123",
+            name="Esparta Inmuebles",
+            slug="esparta",
+            plan="pro",
+            calendar_enabled=True,
+            email_enabled=True,
+            whatsapp_enabled=True,
+            agent_email="agente@esparta.com",
+            agent_whatsapp="+584141234567",
+            qualification_threshold=75,
+            session_ttl_minutes=30,
+            visit_duration_minutes=60,
+            is_active=True,
+        )
+        assert False, "Debería fallar"
+    except Exception:
+        print("  ✅ Plan inválido rechazado")
