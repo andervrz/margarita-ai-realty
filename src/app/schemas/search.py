@@ -2,6 +2,8 @@
 """Schemas Pydantic para búsqueda híbrida."""
 
 from pydantic import BaseModel, Field
+from src.app.schemas.property import PropertyChatSummary
+from src.app.core.constants import SearchSource
 
 
 class FilterQuery(BaseModel):
@@ -26,14 +28,19 @@ class FilterQuery(BaseModel):
     raw_query: str = Field(default="", description="Query original del usuario")
     extracted_by: str = Field(default="regex", description="regex | llm_fallback")
     
+   
     @property
     def is_empty(self) -> bool:
         """True si no hay filtros estructurales extraídos."""
         return all(
             v is None for v in [
-                self.property_type, self.zone, self.min_price_usd,
-                self.max_price_usd, self.bedrooms_min, self.bathrooms_min,
-                self.vista_al_mar, self.frente_playa, self.uso_vacacional,
+                self.property_type, self.zone,
+                self.min_price_usd, self.max_price_usd,
+                self.min_price_bs, self.max_price_bs,
+                self.bedrooms_min, self.bathrooms_min,
+                self.area_min_m2, self.area_max_m2,
+                self.vista_al_mar, self.frente_playa,
+                self.uso_vacacional, self.tipo_especial,
             ]
         )
 
@@ -41,9 +48,10 @@ class FilterQuery(BaseModel):
 class SearchResult(BaseModel):
     """Resultado de búsqueda híbrida."""
     
-    properties: list[dict]
-    source: str  # sql | sqlite_vec | mixed
+    properties: list[PropertyChatSummary]
+    source: SearchSource
     total_found: int
+    query_text: str | None = None
 
 
 # ── Smoke Test ─────────────────────────────────────────────────────
