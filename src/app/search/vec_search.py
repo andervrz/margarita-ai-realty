@@ -177,6 +177,16 @@ def _passes_text_filters(prop: Property, filters: FilterQuery) -> bool:
     return True
 
 
+def _reorder_by_similarity(
+    properties: list[Property],
+    candidate_order: list[str],
+) -> list[Property]:
+    """Re-ordena propiedades filtradas según orden original de similitud vectorial."""
+    id_to_rank = {pid: idx for idx, pid in enumerate(candidate_order)}
+    return sorted(properties, key=lambda p: id_to_rank.get(p.id, float('inf')))
+
+
+
 # ── Búsqueda Vectorial Principal ─────────────────────────────────
 
 async def search_properties_vec(
