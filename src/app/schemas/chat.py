@@ -1,13 +1,15 @@
 # src/app/schemas/chat.py
 """Schemas Pydantic para Chat."""
+from src.app.core.constants import Language, QualificationStage, BookingStep
+from pydantic import BaseModel, Field, ConfigDict
+from src.app.schemas.property import PropertyChatSummary
 
-from pydantic import BaseModel
 
 
 class ChatRequest(BaseModel):
     """Request de mensaje del usuario."""
     
-    message: str
+    message: str = Field(..., min_length=1, max_length=2000)
     session_id: str | None = None
 
 
@@ -16,19 +18,22 @@ class ChatResponse(BaseModel):
     
     message: str
     session_id: str
-    stage: str  # explore | qualify | book
-    properties: list[dict] | None = None
+    stage: QualificationStage # ← tipado y validado automáticamente por Pydantic
+    properties: list[PropertySummary] | None = None
+    booking_step: BookingStep | None = None
 
 
 class SessionState(BaseModel):
     """Estado actual de la sesión."""
+    model_config = ConfigDict(from_attributes=True)
     
     session_id: str
     tenant_id: str
-    language: str
+    language: Language
     qualification_score: int
     is_booking_active: bool
     message_count: int
+    booking_step: BookingStep | None = None
 
 
 # ── Smoke Test ─────────────────────────────────────────────────────
