@@ -46,7 +46,8 @@ def _generate_embedding(query: str) -> np.ndarray:
 
 def _embedding_to_blob(embedding: np.ndarray) -> bytes:
     """Convierte embedding numpy a blob little-endian para sqlite-vec MATCH."""
-    return embedding.tobytes()
+    # Forzar little-endian para compatibilidad cross-platform
+    return embedding.astype(np.float32).newbyteorder('<').tobytes()
 
 
 # ── Gestión de Tablas Vectoriales por Tenant ─────────────────────
@@ -112,47 +113,68 @@ def _apply_hard_filters(
     filtered = []
     
     for prop in properties:
-        # ── Filtros numéricos con manejo de NULL ─────────────────
-        for prop_val, filter_min, filter_max in [
-            (prop.price_usd, filters.min_price_usd, filters.max_price_usd),
-            (prop.bedrooms, filters.bedrooms_min, None),
-            (prop.bathrooms, filters.bathrooms_min, None),
-            (prop.area_m2, filters.area_min_m2, None),
-        ]:
-            if filter_min is not None and (prop_val is None or prop_val < filter_min):
-                break
-            if filter_max is not None and (prop_val is None or prop_val > filter_max):
-                break
-        else:  # Solo ejecuta si no hubo break
-            # ── Filtros booleanos con soporte para False ─────────
-            for prop_flag, filter_val in [
-                (prop.vista_al_mar, filters.vista_al_mar),
-                (prop.frente_playa, filters.frente_playa),
-                (prop.uso_vacacional, filters.uso_vacacional),
-            ]:
-                if filter_val is not None and bool(prop_flag) != filter_val:
-                    break
-            else:
-                # ── Filtros de texto/categoría ───────────────────
-                if filters.property_type and prop.property_type not in filters.property_type:
-                    continue
-                if filters.zone and filters.zone.lower() not in (prop.location_zone or "").lower():
-                    continue
-                if filters.tipo_especial and prop.tipo_especial != filters.tipo_especial:
-                    continue
-                
-                filtered.append(prop)
+        # ── Filtros numéricos ─────────────────────────────────
+        if not _passes_numeric_filters(prop, filters):
+            continue
+        
+        # ── Filtros booleanos ─────────────────────────────────
+        if not _passes_boolean_filters(prop, filters):
+            continue
+        
+        # ── Filtros de texto/categoría ─────────────────────────
+        if not _passes_text_filters(prop, filters):
+            continue
+        
+        filtered.append(prop)
     
     return filtered
 
 
-def _reorder_by_similarity(
-    properties: list[Property],
-    candidate_order: list[str],
-) -> list[Property]:
-    """Re-ordena propiedades filtradas según orden original de similitud vectorial."""
-    id_to_rank = {pid: idx for idx, pid in enumerate(candidate_order)}
-    return sorted(properties, key=lambda p: id_to_rank.get(p.id, float('inf')))
+def _passes_numeric_filters(prop: Property, filters: FilterQuery) -> bool:
+    """Verifica filtros numéricos (precio, habitaciones, baños, área)."""
+    checks = [
+        (prop.price_usd, filters.min_price_usd, filters.max_price_usd),
+        (prop.bedrooms, filters.bedrooms_min, None),
+        (prop.bathrooms, filters.bathrooms_min, None),
+        (prop.area_m2, filters.area_min_m2, None),
+    ]
+    
+    for prop_val, filter_min, filter_max in checks:
+        if filter_min is not None and (prop_val is None or prop_val < filter_min):
+            return False
+        if filter_max is not None and (prop_val is None or prop_val > filter_max):
+            return False
+    
+    return True
+
+
+def _passes_boolean_filters(prop: Property, filters: FilterQuery) -> bool:
+    """Verifica filtros booleanos (vista_al_mar, frente_playa, uso_vacacional)."""
+    checks = [
+        (prop.vista_al_mar, filters.vista_al_mar),
+        (prop.frente_playa, filters.frente_playa),
+        (prop.uso_vacacional, filters.uso_vacacional),
+    ]
+    
+    for prop_flag, filter_val in checks:
+        if filter_val is not None and bool(prop_flag) != filter_val:
+            return False
+    
+    return True
+
+
+def _passes_text_filters(prop: Property, filters: FilterQuery) -> bool:
+    """Verifica filtros de texto (property_type, zone, tipo_especial)."""
+    if filters.property_type and prop.property_type not in filters.property_type:
+        return False
+    
+    if filters.zone and filters.zone.lower() not in (prop.location_zone or "").lower():
+        return False
+    
+    if filters.tipo_especial and prop.tipo_especial != filters.tipo_especial:
+        return False
+    
+    return True
 
 
 # ── Búsqueda Vectorial Principal ─────────────────────────────────
