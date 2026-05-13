@@ -115,9 +115,9 @@ def _property_to_dict(property_obj: Property) -> dict:
         "frente_playa": bool(property_obj.frente_playa) if property_obj.frente_playa is not None else None,
         "uso_vacacional": bool(property_obj.uso_vacacional) if property_obj.uso_vacacional is not None else None,
         
-        # Contenido
-        "amenities": property_obj.amenities or [],
-        "photos": property_obj.photos or [],
+         # Contenido (None preserva semántica "no especificado" vs [] "sin amenities")
+        "amenities": property_obj.amenities if property_obj.amenities is not None else None,
+        "photos": property_obj.photos if property_obj.photos is not None else None,
         "description_es": property_obj.description_es,
         "description_en": property_obj.description_en,
         
