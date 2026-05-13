@@ -19,26 +19,28 @@ Principios:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from src.app.core.logging import get_logger
+from src.app.core.config import get_settings
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 
 # ── Señales y configuración ───────────────────────────────────────
+   
 
 @dataclass(frozen=True)
 class SignalConfig:
     """Configuración de una señal de calificación."""
-    name: str
+   name: str
     points: int
-    patterns_es: list[str]
-    patterns_en: list[str] = None  # type: ignore
-    keywords_es: list[str] = None  # type: ignore
-    keywords_en: list[str] = None  # type: ignore
-    margarita_keywords: list[str] = None  # type: ignore
+    patterns_es: tuple[str, ...] = ()
+    patterns_en: tuple[str, ...] = ()
+    keywords_es: tuple[str, ...] = ()
+    keywords_en: tuple[str, ...] = ()
+    margarita_keywords: tuple[str, ...] = ()
 
 
 # ── Zonas de Margarita (para señal zone_specified) ────────────────
@@ -55,24 +57,23 @@ MARGARITA_ZONES = [
 
 
 # ── Definición de señales ─────────────────────────────────────────
-
 SIGNALS: dict[str, SignalConfig] = {
     "budget_mentioned": SignalConfig(
         name="budget_mentioned",
         points=20,
-        patterns_es=[
+        patterns_es=(
             r"\$[\d,\.]+",
             r"[\d,\.]+\s*(?:dólares|usd|bs)",
             r"(?:hasta|máximo|mínimo|entre)\s+[\d,\.]+",
             r"(?:precio|presupuesto|costo)\s+(?:de|máximo|mínimo)",
             r"(?:cuánto|cuanto)\s+(?:cuesta|vale|sale)",
-        ],
-        patterns_en=[
+        ),
+        patterns_en=(
             r"\$[\d,\.]+",
             r"[\d,\.]+\s*(?:dollars|usd)",
             r"(?:up to|max|between|around)\s+[\d,\.]+",
             r"(?:price|budget|cost)\s+(?:of|range|limit)",
-        ],
+        ),
     ),
     
     "zone_specified": SignalConfig(
@@ -165,11 +166,12 @@ SIGNALS: dict[str, SignalConfig] = {
 
 # ── Umbrales de calificación ──────────────────────────────────────
 
-THRESHOLDS = {
-    "book": 75,      # >= 75: activa booking flow
-    "qualify": 40,   # 40-74: preguntas de calificación
-    "explore": 0,    # < 40: exploración libre
-}
+def get_stage_from_score(score: int, threshold_book: int = 75, threshold_qualify: int = 40) -> str:
+    if score >= threshold_book:
+        return "book"
+    elif score >= threshold_qualify:
+        return "qualify"
+    return "explore"
 
 
 # ── Preguntas de calificación por señal faltante ──────────────────
@@ -192,47 +194,43 @@ QUALIFICATION_QUESTIONS = {
 
 # ── Funciones de detección ────────────────────────────────────────
 
-def detect_signal(
-    signal_name: str,
-    text: str,
-    language: str = "es",
-) -> bool:
-    """Detecta si una señal específica está presente en el texto.
-    
-    Args:
-        signal_name: Nombre de la señal en SIGNALS.
-        text: Texto a analizar (mensaje del usuario).
-        language: "es" | "en".
-    
-    Returns:
-        True si la señal está presente.
-    """
-    if signal_name not in SIGNALS:
+def detect_signal(signal_name: str, text: str, language: str = "es") -> bool:
+    config = SIGNALS.get(signal_name)
+    if not config:
         logger.warning("unknown_signal", signal_name=signal_name)
         return False
-    
-    config = SIGNALS[signal_name]
+
     text_lower = text.lower()
-    
-    # 1. Verificar patterns regex
-    patterns = config.patterns_es if language == "es" else (config.patterns_en or [])
-    for pattern in patterns:
+
+    # Verificar patterns del idioma principal primero
+    primary_patterns = config.patterns_es if language == "es" else config.patterns_en
+    for pattern in primary_patterns:
         if re.search(pattern, text_lower):
             return True
-    
-    # 2. Verificar keywords
-    keywords = config.keywords_es if language == "es" else (config.keywords_en or [])
-    if keywords:
-        for kw in keywords:
-            if kw.lower() in text_lower:
-                return True
-    
-    # 3. Verificar margarita_keywords (solo para zone_specified)
-    if config.margarita_keywords:
-        for zone in config.margarita_keywords:
-            if zone.lower() in text_lower:
-                return True
-    
+
+    # Verificar patterns del idioma secundario (mercado bilingüe Margarita)
+    secondary_patterns = config.patterns_en if language == "es" else config.patterns_es
+    for pattern in secondary_patterns:
+        if re.search(pattern, text_lower):
+            return True
+
+    # Keywords primarias
+    primary_kw = config.keywords_es if language == "es" else config.keywords_en
+    for kw in primary_kw:
+        if kw.lower() in text_lower:
+            return True
+
+    # Keywords secundarias
+    secondary_kw = config.keywords_en if language == "es" else config.keywords_es
+    for kw in secondary_kw:
+        if kw.lower() in text_lower:
+            return True
+
+    # Zonas de Margarita (agnósticas al idioma)
+    for zone in config.margarita_keywords:
+        if zone.lower() in text_lower:
+            return True
+
     return False
 
 
