@@ -174,10 +174,19 @@ def _normalize_text(text: str) -> str:
     return re.sub(r'\s+', ' ', normalized).strip()
 
 
+
 def _parse_price_number(match_str: str) -> float | None:
     """
     Convierte string de precio a número float.
     Soporta: "200000", "200.000", "200,000", "200k", "200 mil", "$200k usd"
+    
+    Formatos:
+    - 150000.00 → 150000.0 (estándar)
+    - 150.000,00 → 150000.0 (venezolano: punto=miles, coma=decimal)
+    - 150,000.00 → 150000.0 (US: coma=miles, punto=decimal)
+    - 150.000 → 150000.0 (venezolano: punto=miles, sin decimales)
+    - 150000,00 → 150000.0 (europeo: coma=decimal)
+    - 200k, 200 mil → 200000.0 (multiplicador)
     """
     if not match_str:
         return None
@@ -185,24 +194,48 @@ def _parse_price_number(match_str: str) -> float | None:
     original = match_str.strip().lower()
     
     # Detectar multiplicador: "k" o "mil" → ×1000
-    multiplier = 1000 if any(k in original for k in ["k", "mil"]) else 1
+    has_multiplier = any(k in original for k in ["k", "mil"])
+    multiplier = 1000 if has_multiplier else 1
     
     # Limpiar: quitar símbolos, letras y espacios
     clean = re.sub(r'[^\d,.]', '', original)
     
-    # Normalizar separadores: "200.000" → "200000", "200,000" → "200.000"
-    if "." in clean and "," in clean:
-        # Formato europeo: 1.234,56 → quitar puntos, coma a punto
-        clean = clean.replace(".", "").replace(",", ".")
-    elif "," in clean and clean.count(",") > 1:
-        # Formato US con comas de miles: 200,000 → quitar comas
-        clean = clean.replace(",", "")
-    elif "." in clean and clean.count(".") > 1:
-        # Múltiples puntos → asumir separador de miles
-        clean = clean.replace(".", "")
-    elif "," in clean:
-        # Una sola coma → asumir decimal
-        clean = clean.replace(",", ".")
+    if not clean:
+        return None
+    
+    # ── Determinar formato por análisis de separadores ─────────
+    has_dot = "." in clean
+    has_comma = "," in clean
+    
+    if has_dot and has_comma:
+        # Ambos presentes: determinar cuál es decimal
+        last_dot = clean.rfind(".")
+        last_comma = clean.rfind(",")
+        
+        if last_comma > last_dot:
+            # Formato venezolano/europeo: 1.234.567,89
+            clean = clean.replace(".", "").replace(",", ".")
+        else:
+            # Formato US: 1,234,567.89
+            clean = clean.replace(",", "")
+    
+    elif has_comma and not has_dot:
+        # Solo coma: ¿decimal o miles?
+        parts = clean.split(",")
+        if len(parts) == 2 and len(parts[1]) <= 2:
+            # Decimal: 150000,50 → 150000.50
+            clean = clean.replace(",", ".")
+        else:
+            # Miles: 1,234,567 → 1234567
+            clean = clean.replace(",", "")
+    
+    elif has_dot and not has_comma:
+        # Solo punto: ¿decimal o miles?
+        parts = clean.split(".")
+        if len(parts) == 2 and len(parts[1]) == 3:
+            # Miles venezolano: 150.000 → 150000
+            clean = clean.replace(".", "")
+        # else: 150.5 → decimal, no cambiar
     
     try:
         value = float(clean) * multiplier
