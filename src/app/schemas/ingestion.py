@@ -1,9 +1,7 @@
 # src/app/schemas/ingestion.py
 """Schemas Pydantic para ingestion de CSV."""
-
-from typing import List
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from src.app.core.constants import IngestionStatus
 
 
 class PropertyCSVRow(BaseModel):
@@ -20,15 +18,27 @@ class PropertyCSVRow(BaseModel):
     bedrooms: int | None = Field(None, ge=0)
     bathrooms: int | None = Field(None, ge=0)
     parking_spots: int | None = Field(None, ge=0)
-    vista_al_mar: int | None = Field(None, ge=0, le=1)
-    frente_playa: int | None = Field(None, ge=0, le=1)
-    uso_vacacional: int | None = Field(None, ge=0, le=1)
+    vista_al_mar: bool = False
+    frente_playa: bool = False
+    uso_vacacional: bool = False
     tipo_especial: str | None = None
     capacidad_huespedes: int | None = Field(None, ge=0)
     amenities: str | None = None  # Comma-separated
     photos: str | None = None  # Comma-separated URLs
     description_es: str | None = None
     description_en: str | None = None
+    external_id: str | None = None
+    
+    @field_validator("vista_al_mar", "frente_playa", "uso_vacacional", mode="before")
+    @classmethod
+    def parse_bool_field(cls, v):
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, int):
+            return bool(v)
+        if isinstance(v, str):
+            return v.strip().lower() in ("1", "true", "si", "sí", "yes")
+        return False
 
 
 class IngestionResult(BaseModel):
@@ -41,8 +51,8 @@ class IngestionResult(BaseModel):
     updated_rows: int
     skipped_rows: int
     failed_rows: int
-    errors: List[str]
-    status: str  # success | partial | failed
+    errors: list[str]
+    status: IngestionStatus
 
 
 # ── Smoke Test ─────────────────────────────────────────────────────
