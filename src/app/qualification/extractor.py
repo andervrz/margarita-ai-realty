@@ -19,6 +19,7 @@ Principios:
 """
 
 from __future__ import annotations
+from typing import Any
 
 from dataclasses import dataclass, field
 
@@ -30,7 +31,7 @@ from src.app.qualification.signals import (
     MARGARITA_ZONES,
 )
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 
 # ── Dataclass de resultado ────────────────────────────────────────
@@ -72,7 +73,7 @@ class ExtractedSignals:
 # ── Función principal ─────────────────────────────────────────────
 
 def extract_signals_from_history(
-    messages: list[dict[str, any]],
+    messages: list[dict[str, Any]],
     language: str = "es",
 ) -> ExtractedSignals:
     """Extrae señales de calificación de un historial de mensajes.
@@ -144,8 +145,8 @@ def _detect_standard_signals(
 
 
 def _detect_property_followup(
-    current_msg: dict[str, any],
-    all_messages: list[dict[str, any]],
+    current_msg: dict[str, Any],
+    all_messages: list[dict[str, Any]],
     result: ExtractedSignals,
 ) -> None:
     """Detecta si el usuario hace follow-up de una propiedad mostrada.
