@@ -32,6 +32,8 @@ logger = get_logger("search.filter_llm")
 
 # ── Configuración de Cache ───────────────────────────────────────
 # Cache simple para queries idénticos en ventana de tiempo corta
+# NOTA: @lru_cache en _get_query_cache_key solo cachea la CLAVE, no el resultado.
+# Para cache de resultados completos, implementar en V2 con Redis.
 # Máximo 256 entradas ~ 50KB de memoria
 QUERY_CACHE_TTL_SECONDS = 300  # 5 minutos
 
@@ -548,23 +550,22 @@ def _build_filter_query_fallback(data: dict[str, Any], raw_query: str) -> Filter
 
 def _select_model_for_structured_output() -> str:
     """Selecciona modelo que soporta Structured Output con JSON Schema."""
-    # Prioridad: modelos con mejor soporte para response_format
+    # V1: Groq primary, Gemini fallback (OpenAI descartado por PLAN.md v1.2)
     if settings.groq_api_key:
-        return "groq/llama-3.3-70b-versatile"  # Soporta json_schema
-    if settings.openai_api_key:
-        return "openai/gpt-4o-mini"  # Soporta response_format
-    return settings.llm_model or "gemini/gemini-2.0-flash"  # Fallback genérico
+        return "groq/llama-3.3-70b-versatile"
+    if settings.gemini_api_key:
+        return "gemini/gemini-2.5-pro"
+    return settings.llm_model or "groq/llama-3.3-70b-versatile"
 
 
 def _select_model_for_fallback() -> str:
     """Selecciona modelo para fallback manual (más tolerante)."""
-    # Para fallback, priorizamos modelos con buena comprensión en español
+    # V1: Groq primary, Gemini fallback (OpenAI descartado por PLAN.md v1.2)
     if settings.groq_api_key:
-        return "groq/llama-3.1-8b-instant"  # Más rápido para fallback
-    if settings.openai_api_key:
-        return "openai/gpt-3.5-turbo"  # Balance costo/velocidad
-    return settings.llm_model or "gemini/gemini-2.0-flash-lite"
-
+        return "groq/llama-3.3-70b-versatile"
+    if settings.gemini_api_key:
+        return "gemini/gemini-2.0-flash"
+    return settings.llm_model or "groq/llama-3.3-70b-versatile"
 
 # ── Utilidades de Monitoreo ─────────────────────────────────────
 
