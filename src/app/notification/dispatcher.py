@@ -30,7 +30,7 @@ from src.app.db.models.tenant import Tenant
 from src.app.notifications.whatsapp import send_booking_whatsapp
 from src.app.notifications.email import send_booking_email
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 
 # ── Dataclass de resultado ────────────────────────────────────────
