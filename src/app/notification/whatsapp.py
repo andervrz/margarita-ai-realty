@@ -22,14 +22,17 @@ from src.app.core.config import get_settings
 from src.app.core.logging import get_logger
 from src.app.db.models.lead import Lead
 from src.app.db.models.property import Property
-from app.db.models.tenant import Tenant
+from src.app.db.models.tenant import Tenant
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 
-# ── Configuración ─────────────────────────────────────────────────
+# ── Excepciones ───────────────────────────────────────────────────
 
-settings = get_settings()
+class WhatsAppAPIError(Exception):
+    """Error en comunicación con Meta WhatsApp Cloud API."""
+    pass
+
 
 
 # ── Función principal ─────────────────────────────────────────────
@@ -37,7 +40,7 @@ settings = get_settings()
 async def send_booking_whatsapp(
     lead: Lead,
     tenant: Tenant,
-    property: Property | None = None,
+    prop: Property | None = None,
 ) -> str:
     """Envía notificación de booking al agente por WhatsApp.
     
@@ -52,13 +55,15 @@ async def send_booking_whatsapp(
     Raises:
         WhatsAppAPIError: Si la API de Meta falla.
     """
+    settings = get_settings()
+    
     if not tenant.whatsapp_phone_id or not tenant.agent_whatsapp:
         raise WhatsAppAPIError("Tenant no tiene configurado WhatsApp phone_id o agent_whatsapp")
     
-    message = _build_whatsapp_message(lead, property)
+    message = _build_whatsapp_message(lead, prop)
     
     url = (
-        f"https://graph.facebook.com/v{settings.whatsapp_api_version}/"
+        f"https://graph.facebook.com/{settings.whatsapp_api_version}/"
         f"{tenant.whatsapp_phone_id}/messages"
     )
     
@@ -107,7 +112,7 @@ async def send_booking_whatsapp(
 
 def _build_whatsapp_message(
     lead: Lead,
-    property: Property | None = None,
+    prop: Property | None = None,
 ) -> str:
     """Construye mensaje formateado para WhatsApp del agente.
     
@@ -128,12 +133,12 @@ def _build_whatsapp_message(
     lines.append("")
     
     # Propiedad
-    if property:
-        lines.append(f"🏠 *{property.title}*")
-        if property.location_zone:
-            lines.append(f"📍 {property.location_zone}")
-        if property.price_usd:
-            lines.append(f"💰 ${property.price_usd:,.0f} USD")
+    if prop:
+        lines.append(f"🏠 *{prop.title}*")
+        if prop.location_zone:
+            lines.append(f"📍 {prop.location_zone}")
+        if prop.price_usd:
+            lines.append(f"💰 ${prop.price_usd:,.0f} USD")
         lines.append("")
     
     # Datos del lead
@@ -169,13 +174,6 @@ def _build_whatsapp_message(
     lines.append("✅ Confirmar visita en el panel de administración.")
     
     return "\n".join(lines)
-
-
-# ── Excepciones ───────────────────────────────────────────────────
-
-class WhatsAppAPIError(Exception):
-    """Error en comunicación con Meta WhatsApp Cloud API."""
-    pass
 
 
 # ── Smoke Test ────────────────────────────────────────────────────
@@ -273,17 +271,20 @@ if __name__ == "__main__":
         mock_tenant_ok.agent_whatsapp = "+584120000000"
         mock_tenant_ok.id = "tenant-123"
         
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {"messages": [{"id": "wamid.123"}]}
-            mock_response.content = b'{"messages":[{"id":"wamid.123"}]}'
-            mock_post.return_value = mock_response
-            
-            msg_id = await send_booking_whatsapp(mock_lead, mock_tenant_ok)
-            assert msg_id == "wamid.123"
-            print("  ✅ Envío mock exitoso")
-        
+        with patch("httpx.AsyncClient") as mock_client_class:
+          mock_client = AsyncMock()
+          mock_client_class.return_value.__aenter__.return_value = mock_client
+          
+          mock_response = MagicMock()
+          mock_response.status_code = 200
+          mock_response.json.return_value = {"messages": [{"id": "wamid.123"}]}
+          mock_response.content = b'{"messages":[{"id":"wamid.123"}]}'
+          mock_client.post = AsyncMock(return_value=mock_response)
+          
+          msg_id = await send_booking_whatsapp(mock_lead, mock_tenant_ok)
+          assert msg_id == "wamid.123"
+          print("  ✅ Envío mock exitoso")
+      
         print("\n🎉 Todos los smoke tests pasaron")
     
     asyncio.run(_test())
