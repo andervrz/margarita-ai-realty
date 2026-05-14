@@ -20,19 +20,26 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import aiosmtplib
+import uuid
 
 from src.app.core.config import get_settings
 from src.app.core.logging import get_logger
 from src.app.db.models.lead import Lead
 from src.app.db.models.property import Property
-from app.db.models.tenant import Tenant
+from src.app.db.models.tenant import Tenant
 
-logger = get_logger()
+logger = get_logger(__name__)
+
+# ── Excepciones ───────────────────────────────────────────────────
+
+class EmailSMTPError(Exception):
+    """Error en comunicación SMTP."""
+    pass
 
 
 # ── Configuración ─────────────────────────────────────────────────
 
-settings = get_settings()
+
 
 
 # ── Función principal ─────────────────────────────────────────────
@@ -40,7 +47,7 @@ settings = get_settings()
 async def send_booking_email(
     lead: Lead,
     tenant: Tenant,
-    property: Property | None = None,
+    prop: Property | None = None,
 ) -> str:
     """Envía notificación de booking al agente por email.
     
@@ -55,6 +62,7 @@ async def send_booking_email(
     Raises:
         EmailSMTPError: Si la conexión SMTP falla.
     """
+    settings = get_settings()
     if not tenant.agent_email:
         raise EmailSMTPError("Tenant no tiene configurado agent_email")
     
@@ -62,7 +70,7 @@ async def send_booking_email(
         raise EmailSMTPError("SMTP no configurado en variables de entorno")
     
     # Construir mensaje
-    msg = _build_email_message(lead, tenant, property)
+    msg = _build_email_message(lead, tenant, prop)
     
     try:
         async with aiosmtplib.SMTP(
@@ -124,34 +132,36 @@ async def send_booking_email(
 def _build_email_message(
     lead: Lead,
     tenant: Tenant,
-    property: Property | None = None,
+    prop: Property | None = None,
 ) -> MIMEMultipart:
     """Construye mensaje MIME multipart (HTML + texto plano)."""
     
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = _build_subject(lead, property)
+    msg["Subject"] = _build_subject(lead, prop)
     msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_user}>"
     msg["To"] = tenant.agent_email
-    
+    msg["Message-ID"] = f"<{uuid.uuid4()}@{settings.smtp_host}>"
+
+  
     # Texto plano
-    text_body = _build_text_body(lead, property)
+    text_body = _build_text_body(lead, prop)
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     
     # HTML
-    html_body = _build_html_body(lead, property)
+    html_body = _build_html_body(lead, prop)
     msg.attach(MIMEText(html_body, "html", "utf-8"))
-    
+    msg["Message-ID"] = f"<{uuid.uuid4()}@{settings.smtp_host}>"
     return msg
 
 
-def _build_subject(lead: Lead, property: Property | None = None) -> str:
+def _build_subject(lead: Lead, prop: Property | None = None) -> str:
     """Construye asunto del email."""
-    prop_info = f" — {property.title}" if property else ""
+    prop_info = f" — {prop.title}" if prop else ""
     intl_flag = " [🌍 Internacional]" if lead.is_international else ""
     return f"🔔 Nueva visita{prop_info}{intl_flag} — {lead.name}"
 
 
-def _build_text_body(lead: Lead, property: Property | None = None) -> str:
+def _build_text_body(lead: Lead, prop: Property | None = None) -> str:
     """Construye cuerpo en texto plano."""
     lines: list[str] = [
         "NUEVA SOLICITUD DE VISITA",
@@ -159,11 +169,11 @@ def _build_text_body(lead: Lead, property: Property | None = None) -> str:
         "",
     ]
     
-    if property:
+    if prop:
         lines.extend([
-            f"PROPIEDAD: {property.title}",
-            f"ZONA: {property.location_zone or 'N/A'}",
-            f"PRECIO: ${property.price_usd:,.0f} USD" if property.price_usd else "PRECIO: Consultar",
+            f"PROPIEDAD: {prop.title}",
+            f"ZONA: {prop.location_zone or 'N/A'}",
+            f"PRECIO: ${prop.price_usd:,.0f} USD" if prop.price_usd else "PRECIO: Consultar",
             "",
         ])
     
@@ -195,23 +205,23 @@ def _build_text_body(lead: Lead, property: Property | None = None) -> str:
     return "\n".join(lines)
 
 
-def _build_html_body(lead: Lead, property: Property | None = None) -> str:
+def _build_html_body(lead: Lead, prop: Property | None = None) -> str:
     """Construye cuerpo HTML responsive."""
     
     # Propiedad card
     property_card = ""
-    if property:
-        price_str = f"${property.price_usd:,.0f} USD" if property.price_usd else "Consultar"
+    if prop:
+        price_str = f"${prop.price_usd:,.0f} USD" if prop.price_usd else "Consultar"
         property_card = f"""
         <div style="background:#f8f9fa;border-radius:8px;padding:16px;margin:16px 0;">
-            <h3 style="margin:0 0 8px 0;color:#2c3e50;">🏠 {property.title}</h3>
-            <p style="margin:4px 0;color:#666;">📍 {property.location_zone or 'Zona no especificada'}</p>
+            <h3 style="margin:0 0 8px 0;color:#2c3e50;">🏠 {prop.title}</h3>
+            <p style="margin:4px 0;color:#666;">📍 {prop.location_zone or 'Zona no especificada'}</p>
             <p style="margin:4px 0;color:#27ae60;font-weight:bold;">💰 {price_str}</p>
         </div>
         """
     
     # Score badge
-    score_color = "#e74c3c" if (lead.qualification_score or 0) >= 75 else "#f39c12"
+    score_color = "#27ae60" if (lead.qualification_score or 0) >= 75 else "#f39c12"
     score_emoji = "🔥" if (lead.qualification_score or 0) >= 75 else "⭐"
     score_html = f"""
     <span style="background:{score_color};color:white;padding:4px 12px;border-radius:12px;font-size:14px;">
@@ -302,12 +312,6 @@ def _build_html_body(lead: Lead, property: Property | None = None) -> str:
 </html>"""
 
 
-# ── Excepciones ───────────────────────────────────────────────────
-
-class EmailSMTPError(Exception):
-    """Error en comunicación SMTP."""
-    pass
-
 
 # ── Smoke Test ────────────────────────────────────────────────────
 if __name__ == "__main__":
@@ -320,7 +324,7 @@ if __name__ == "__main__":
         # Test 1: Construcción asunto
         mock_lead = MagicMock()
         mock_lead.name = "María González"
-        mock_lead.is_international = 1
+        mock_lead.is_international = True
         mock_lead.qualification_score = 85
         
         mock_prop = MagicMock()
