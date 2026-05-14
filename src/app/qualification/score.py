@@ -15,7 +15,7 @@ Principios:
 """
 
 from __future__ import annotations
-
+from typing import Any
 from dataclasses import dataclass
 
 from src.app.core.config import get_settings
@@ -25,9 +25,9 @@ from src.app.qualification.extractor import (
     extract_signals_from_history,
     get_missing_signals,
 )
-from src.app.qualification.signals import get_stage_from_score, THRESHOLDS
+from src.app.qualification.signals import get_stage_from_score
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 
 # ── Dataclass de resultado ────────────────────────────────────────
@@ -37,18 +37,18 @@ class QualificationResult:
     """Resultado completo de calificación de un lead."""
     
     total_score: int
-    stage: str  # "explore" | "qualify" | "book"
-    signals_found: list[str]
-    missing_signals: list[str]
+    stage: str
+    signals_found: tuple[str, ...]
+    missing_signals: tuple[str, ...]
     is_international: bool
-    suggested_questions: list[str]
-    raw_signals: dict  # Para debugging/auditoría
+    suggested_questions: tuple[str, ...]
+    raw_signals: dict  # dict es inevitable aquí — documentar que es read-only
 
 
 # ── Función principal ─────────────────────────────────────────────
 
 def calculate_qualification_score(
-    messages: list[dict[str, any]],
+    messages: list[dict[str, Any]],
     current_query: str,
     language: str = "es",
 ) -> QualificationResult:
@@ -77,7 +77,11 @@ def calculate_qualification_score(
     total_score = max(0, min(100, base_score + modifiers))
     
     # 5. Determinar etapa
-    stage = get_stage_from_score(total_score)
+    stage = get_stage_from_score(
+      total_score,
+      threshold_book = settings.qualifier_book_threshold,
+      threshold_qualify = settings.qualifier_qualify_threshold,
+    )
     
     # 6. Señales faltantes y preguntas sugeridas
     missing = get_missing_signals(extracted)
@@ -99,10 +103,10 @@ def calculate_qualification_score(
     return QualificationResult(
         total_score=total_score,
         stage=stage,
-        signals_found=extracted.signals_found.copy(),
-        missing_signals=missing,
+        signals_found=tuple(extracted.signals_found),,
+        missing_signals=tuple(missing),
         is_international=is_international,
-        suggested_questions=questions,
+        suggested_questions=tuple(questions),
         raw_signals=extracted.to_dict(),
     )
 
@@ -179,7 +183,7 @@ def _calculate_modifiers(
     
     # Penalización: mensaje muy corto
     words = query_lower.split()
-    if len(words) < 3:
+    if len(words) < 3 and not extracted.signals_found:
         modifiers -= 5
         logger.debug("modifier_too_short", words=len(words))
     
