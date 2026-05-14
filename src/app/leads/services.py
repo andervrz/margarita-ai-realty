@@ -25,9 +25,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.config import get_settings
 from src.app.core.logging import get_logger
 from src.app.db.models.lead import Lead
-from src.app.schemas.lead import LeadCreate, LeadUpdate
+from src.app.schemas.lead import LeadCreate
+from src.app.core.constants import LeadStatus
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 
 # ── Funciones CRUD ────────────────────────────────────────────────
@@ -61,8 +62,8 @@ async def create_lead(
         visit_duration_minutes=lead_data.visit_duration_minutes,
         notes=lead_data.notes,
         qualification_score=lead_data.qualification_score,
-        is_international=1 if lead_data.is_international else 0,
-        status="pendiente",
+        is_international=lead_data.is_international,
+        status=LeadStatus.PENDIENTE.value,
         created_at=now,
         updated_at=now,
     )
@@ -143,7 +144,7 @@ async def update_lead_status(
     session: AsyncSession,
     lead_id: str,
     tenant_id: str,
-    new_status: str,
+    new_status: LeadStatus,
     calendar_event_id: str | None = None,
     whatsapp_sent: bool | None = None,
     email_sent: bool | None = None,
@@ -175,10 +176,10 @@ async def update_lead_status(
         lead.calendar_event_id = calendar_event_id
     
     if whatsapp_sent is not None:
-        lead.whatsapp_sent = 1 if whatsapp_sent else 0
+        lead.whatsapp_sent = whatsapp_sent
     
     if email_sent is not None:
-        lead.email_sent = 1 if email_sent else 0
+        lead.email_sent = email_sent
     
     await session.commit()
     await session.refresh(lead)
@@ -241,7 +242,7 @@ async def get_lead_stats(
     # Compradores internacionales
     intl_stmt = select(func.count(Lead.id)).where(
         Lead.tenant_id == tenant_id,
-        Lead.is_international == 1,
+        Lead.is_international == True,
     )
     intl_result = await session.execute(intl_stmt)
     intl_count = intl_result.scalar() or 0
