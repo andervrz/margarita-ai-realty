@@ -20,14 +20,15 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from typing import Any
+import time
 
 from src.app.core.config import get_settings
 from src.app.core.logging import get_logger
 from src.app.db.models.lead import Lead
 from src.app.db.models.property import Property
-from app.db.models.tenant import Tenant
-from app.notifications.whatsapp import send_booking_whatsapp
-from app.notifications.email import send_booking_email
+from src.app.db.models.tenant import Tenant
+from src.app.notifications.whatsapp import send_booking_whatsapp
+from src.app.notifications.email import send_booking_email
 
 logger = get_logger()
 
@@ -49,20 +50,20 @@ class NotificationResult:
 async def dispatch_booking_notifications(
     lead: Lead,
     tenant: Tenant,
-    property: Property | None = None,
+    prop: Property | None = None,
 ) -> NotificationResult:
     """Dispara notificaciones de booking al agente por WhatsApp + Email.
     
     Args:
         lead: Lead creado con datos de visita.
         tenant: Configuración del tenant (flags de canales, contactos).
-        property: Propiedad asociada (opcional, para contexto en mensaje).
+        prop: Propiedad asociada (opcional, para contexto en mensaje).
     
     Returns:
         NotificationResult con estado de cada canal.
     """
     settings = get_settings()
-    start_time = asyncio.get_event_loop().time()
+    start_time = time.monotonic()
     
     # Construir lista de tareas según configuración del tenant
     tasks: list[asyncio.Task] = []
@@ -72,7 +73,7 @@ async def dispatch_booking_notifications(
         tasks.append(
             asyncio.create_task(
                 _send_whatsapp_with_timeout(
-                    lead, tenant, property, settings.external_api_timeout
+                    lead, tenant, prop, settings.external_api_timeout
                 )
             )
         )
@@ -82,7 +83,7 @@ async def dispatch_booking_notifications(
         tasks.append(
             asyncio.create_task(
                 _send_email_with_timeout(
-                    lead, tenant, property, settings.external_api_timeout
+                    lead, tenant, prop, settings.external_api_timeout
                 )
             )
         )
@@ -100,8 +101,8 @@ async def dispatch_booking_notifications(
         return NotificationResult(
             whatsapp_success=False,
             email_success=False,
-            whatsapp_error="No channels enabled",
-            email_error="No channels enabled",
+            whatsapp_error=None,
+            email_error=None,
             duration_ms=0.0,
         )
     
@@ -140,7 +141,7 @@ async def dispatch_booking_notifications(
             else:
                 email_success = True
     
-    duration_ms = (asyncio.get_event_loop().time() - start_time) * 1000
+    duration_ms = (time.monotonic() - start_time) * 1000
     
     logger.info(
         "notification_dispatch_complete",
@@ -165,12 +166,12 @@ async def dispatch_booking_notifications(
 async def _send_whatsapp_with_timeout(
     lead: Lead,
     tenant: Tenant,
-    property: Property | None,
+    prop: Property | None,
     timeout: int,
 ) -> None:
     """Envía WhatsApp con timeout estricto."""
     await asyncio.wait_for(
-        send_booking_whatsapp(lead, tenant, property),
+        send_booking_whatsapp(lead, tenant, prop),
         timeout=timeout,
     )
 
@@ -178,12 +179,12 @@ async def _send_whatsapp_with_timeout(
 async def _send_email_with_timeout(
     lead: Lead,
     tenant: Tenant,
-    property: Property | None,
+    prop: Property | None,
     timeout: int,
 ) -> None:
     """Envía Email con timeout estricto."""
     await asyncio.wait_for(
-        send_booking_email(lead, tenant, property),
+        send_booking_email(lead, tenant, prop),
         timeout=timeout,
     )
 
@@ -194,7 +195,7 @@ async def send_single_notification(
     channel: str,
     lead: Lead,
     tenant: Tenant,
-    property: Property | None = None,
+    prop: Property | None = None,
 ) -> tuple[bool, str | None]:
     """Envía notificación por un solo canal (para reintentos).
     
@@ -208,10 +209,10 @@ async def send_single_notification(
     
     try:
         if channel == "whatsapp":
-            await _send_whatsapp_with_timeout(lead, tenant, property, settings.external_api_timeout)
+            await _send_whatsapp_with_timeout(lead, tenant, prop, settings.external_api_timeout)
             return True, None
         elif channel == "email":
-            await _send_email_with_timeout(lead, tenant, property, settings.external_api_timeout)
+            await _send_email_with_timeout(lead, tenant, prop, settings.external_api_timeout)
             return True, None
         else:
             return False, f"Unknown channel: {channel}"
@@ -220,6 +221,7 @@ async def send_single_notification(
             "notification_single_failed",
             channel=channel,
             lead_id=str(lead.id),
+            tenant_id=str(tenant.id),
             error=str(exc),
         )
         return False, str(exc)
@@ -270,8 +272,8 @@ if __name__ == "__main__":
         mock_tenant_full.agent_email = "agent@test.com"
         mock_tenant_full.id = "tenant-123"
         
-        with patch("app.notifications.dispatcher._send_whatsapp_with_timeout", new_callable=AsyncMock) as mock_wa, \
-             patch("app.notifications.dispatcher._send_email_with_timeout", new_callable=AsyncMock) as mock_email:
+        with patch("src.app.notifications.dispatcher._send_whatsapp_with_timeout", new_callable=AsyncMock) as mock_wa, \
+             patch("src.app.notifications.dispatcher._send_email_with_timeout", new_callable=AsyncMock) as mock_email:
             
             result_full = await dispatch_booking_notifications(mock_lead, mock_tenant_full)
             assert result_full.whatsapp_success is True
@@ -281,8 +283,8 @@ if __name__ == "__main__":
             print("  ✅ Ambos canales ejecutados en paralelo")
         
         # Test 4: Un canal falla, el otro continúa
-        with patch("app.notifications.dispatcher._send_whatsapp_with_timeout", side_effect=Exception("WA down")), \
-             patch("app.notifications.dispatcher._send_email_with_timeout", new_callable=AsyncMock) as mock_email_ok:
+        with patch("src.app.notifications.dispatcher._send_whatsapp_with_timeout", side_effect=Exception("WA down")), \
+             patch("src.app.notifications.dispatcher._send_email_with_timeout", new_callable=AsyncMock) as mock_email_ok:
             
             result_partial = await dispatch_booking_notifications(mock_lead, mock_tenant_full)
             assert result_partial.whatsapp_success is False
@@ -291,7 +293,7 @@ if __name__ == "__main__":
             print("  ✅ Fallo WhatsApp → Email continúa")
         
         # Test 5: send_single_notification
-        with patch("app.notifications.dispatcher._send_whatsapp_with_timeout", new_callable=AsyncMock):
+        with patch("src.app.notifications.dispatcher._send_whatsapp_with_timeout", new_callable=AsyncMock):
             success, error = await send_single_notification("whatsapp", mock_lead, mock_tenant_full)
             assert success is True
             assert error is None
