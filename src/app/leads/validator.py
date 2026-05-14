@@ -18,17 +18,19 @@ Principios:
 
 from __future__ import annotations
 
+
 import re
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timezone, timedelta
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, field_validator, ValidationError
+from pydantic import BaseModel, EmailStr, field_validator, ValidationError, TypeAdapter
+from pydantic.fields import FieldInfo
 
 from src.app.core.config import get_settings
 from src.app.core.logging import get_logger
 
-logger = get_logger()
-
+logger = get_logger(__name__)
+_email_adapter = TypeAdapter(EmailStr)
 
 # ── Constantes de validación ──────────────────────────────────────
 
@@ -41,7 +43,7 @@ PHONE_REGEX_INTL = re.compile(r"^\+\d{1,3}\s?\d{6,14}$")  # +1 4155551234, +34 6
 
 BUSINESS_HOURS_START = time(8, 0)   # 08:00
 BUSINESS_HOURS_END = time(18, 0)    # 18:00 (6 PM)
-BUSINESS_DAYS = [0, 1, 2, 3, 4, 5]  # Lunes-Sábado (0=Monday in Python)
+BUSINESS_DAYS = [0, 1, 2, 3, 4, 5, 6]  # Lunes-Domingo (0=Monday in Python)
 
 
 # ── Schemas de validación ─────────────────────────────────────────
@@ -106,11 +108,7 @@ class LeadValidator(BaseModel):
             raise ValueError("La fecha debe ser hoy o en el futuro")
         
         # No más de 90 días en futuro (evitar agendamientos lejanos)
-        max_date = today.replace(day=today.day + 90) if today.day <= 28 else today
-        # Simplificación: usar timedelta
-        from datetime import timedelta
         max_date = today + timedelta(days=90)
-        
         if parsed > max_date:
             raise ValueError("La fecha no puede ser más de 90 días en el futuro")
         
@@ -163,28 +161,32 @@ class LeadValidator(BaseModel):
 
 # ── Funciones de validación individuales ────────────────────────
 
+# O más simple — extraer la validación a función pura
+def _validate_name_value(v: str) -> str:
+    """Lógica pura de validación, reutilizable."""
+    v = v.strip()
+    if len(v) < MIN_NAME_LENGTH:
+        raise ValueError(f"Nombre debe tener al menos {MIN_NAME_LENGTH} caracteres")
+    if len(v) > MAX_NAME_LENGTH:
+        raise ValueError(f"Nombre no puede exceder {MAX_NAME_LENGTH} caracteres")
+    if not re.search(r"[A-Za-záéíóúñÁÉÍÓÚÑ]", v):
+        raise ValueError("Nombre debe contener al menos una letra")
+    return v
+
 def validate_name(name: str, language: str = "es") -> tuple[bool, str | None]:
-    """Valida nombre. Retorna (is_valid, error_message)."""
     try:
-        LeadValidator(name=name, email="test@test.com", phone="+584141234567", 
-                     preferred_date="2026-12-31", preferred_time="10:00")
+        _validate_name_value(name)
         return True, None
-    except ValidationError as exc:
-        for err in exc.errors():
-            if err["loc"] == ("name",):
-                msg = err["msg"]
-                if language == "es":
-                    return False, f"Nombre inválido: {msg}"
-                return False, f"Invalid name: {msg}"
-        return False, "Validation error"
-    except Exception as exc:
-        return False, str(exc)
+    except ValueError as e:
+        msg = str(e)
+        return False, f"Nombre inválido: {msg}" if language == "es" else f"Invalid name: {msg}"
+
 
 
 def validate_email(email: str, language: str = "es") -> tuple[bool, str | None]:
     """Valida email. Retorna (is_valid, error_message)."""
     try:
-        EmailStr._validate(email)
+        _email_adapter.validate_python(email)
         return True, None
     except Exception:
         if language == "es":
