@@ -1,81 +1,79 @@
-# project/src/app/api/v1/ingestion.py
+# src/app/api/v1/ingestion.py
 """Ingestion API — CSV upload + pipeline de procesamiento.
 
 Endpoints:
-    POST /ingestion        → Subir CSV/Excel, procesar pipeline
-    GET  /ingestion/{id}   → Ver estado de una ingestion
-    GET  /ingestion        → Listar ingestions del tenant
+    POST /ingestion          → Subir CSV, ejecutar pipeline
+    GET  /ingestion          → Listar ingestions del tenant
+    GET  /ingestion/{id}     → Ver detalle de una ingestion
 
 Flujo de upload:
     1. Cliente envía multipart/form-data con archivo CSV
-    2. Server calcula checksum SHA-256 del archivo
-    3. Si checksum ya existe → retorna ingestion existente (idempotencia)
-    4. Si es nuevo → parsea filas → valida con PropertyCSVRow → upsert DB
+    2. Server calcula SHA-256 del archivo (idempotencia)
+    3. Si checksum ya existe → retorna ingestion anterior sin re-procesar
+    4. Parsea CSV → valida con PropertyCSVRow → upsert en DB
     5. Genera embeddings sqlite-vec para propiedades nuevas/actualizadas
-    6. Guarda ingestion_log con diff completo
+    6. Guarda IngestionLog con estadísticas completas
     7. Retorna resumen: inserted, updated, skipped, failed
 
-Formato CSV esperado (columnas):
-    external_id, title, property_type, price_usd, price_bs, location_city,
-    location_zone, location_address, area_m2, bedrooms, bathrooms,
-    parking_spots, vista_al_mar, frente_playa, uso_vacacional,
-    tipo_especial, capacidad_huespedes, amenities, photos,
-    description_es, description_en
+Formato CSV esperado:
+    external_id, title, property_type, price_usd, price_bs,
+    location_city, location_zone, location_address, area_m2,
+    bedrooms, bathrooms, parking_spots, vista_al_mar, frente_playa,
+    uso_vacacional, tipo_especial, capacidad_huespedes,
+    amenities, photos, description_es, description_en
 
-Nota: La primera fila debe ser headers. Encoding: UTF-8 (con fallback a latin-1).
+Primera fila: headers. Encoding: UTF-8 con fallback a latin-1.
 """
 
 from __future__ import annotations
 
-import hashlib
-import io
-from typing import TYPE_CHECKING
-from uuid import uuid4
+import json
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from src.app.api.middleware import get_current_tenant
-from src.app.core.config import settings
-from src.app.core.logging import logger
+from src.app.core.logging import get_logger
+from src.app.db.engine import AsyncSessionLocal
+from src.app.db.models.ingestion_log import IngestionLog
 from src.app.ingestion.hasher import file_checksum
-from src.app.ingestion.parser import parse_csv
-from src.app.ingestion.pipeline import run_ingestion_pipeline
+from src.app.ingestion.parser import parse_properties_csv
+from src.app.ingestion.pipeline import IngestionPipeline
 
-if TYPE_CHECKING:
-    pass
-
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
 
 
-# ── Schemas ────────────────────────────────────────────────────────
+# ── Schemas ───────────────────────────────────────────────────────
 
 class IngestionResponse(BaseModel):
     """Resumen de una ingestion completada."""
     ingestion_id: str
     filename: str
     file_checksum: str
-    status: str = Field(..., description="success | partial | failed")
+    status: str = Field(..., description="success | partial | failed | skipped")
     total_rows: int
+    valid_rows: int
     inserted_rows: int
     updated_rows: int
     skipped_rows: int
     failed_rows: int
     errors: list[str] = Field(default_factory=list)
-    duration_seconds: float
 
 
 class IngestionListItem(BaseModel):
-    """Item de la lista de ingestions."""
+    """Item resumido de la lista de ingestions."""
     ingestion_id: str
     filename: str
     status: str
     created_at: str
     total_rows: int
+    inserted_rows: int
+    updated_rows: int
 
 
-# ── Endpoints ──────────────────────────────────────────────────────
+# ── Endpoints ─────────────────────────────────────────────────────
 
 @router.post(
     "",
@@ -83,94 +81,103 @@ class IngestionListItem(BaseModel):
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_csv(
-    file: UploadFile = File(..., description="Archivo CSV o Excel con propiedades"),
+    file: UploadFile = File(..., description="CSV o Excel con propiedades"),
     tenant: dict = Depends(get_current_tenant),
 ) -> IngestionResponse:
     """Sube un CSV de propiedades y ejecuta el pipeline de ingestion.
-    
-    Idempotente: si el mismo archivo se sube dos veces (mismo checksum),
-    la segunda retorna el resultado de la primera sin re-procesar.
+
+    Idempotente: el mismo archivo (mismo checksum) retorna el resultado
+    de la ingestion anterior sin re-procesar.
     """
     tenant_id = tenant["id"]
-    filename = file.filename or "unknown"
-    
+    filename = file.filename or "upload.csv"
+
     logger.info("ingestion_upload_start", tenant_id=tenant_id, filename=filename)
 
     # Leer contenido del archivo
     content = await file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="Archivo vacío")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Archivo vacío",
+        )
 
-    # Calcular checksum para idempotencia
+    # Checksum para idempotencia
     checksum = file_checksum(content)
-    logger.info("ingestion_checksum", tenant_id=tenant_id, checksum=checksum[:16])
+    logger.info(
+        "ingestion_checksum_calculated",
+        tenant_id=tenant_id,
+        checksum_prefix=checksum[:16],
+    )
 
-    # Verificar si ya existe ingestion con mismo checksum
+    # Verificar si ya se procesó este archivo
     existing = await _find_existing_ingestion(tenant_id, checksum)
     if existing:
-        logger.info("ingestion_duplicate", tenant_id=tenant_id, checksum=checksum[:16])
+        logger.info(
+            "ingestion_duplicate_skipped",
+            tenant_id=tenant_id,
+            existing_id=existing["id"],
+        )
         return IngestionResponse(
             ingestion_id=existing["id"],
             filename=filename,
             file_checksum=checksum,
             status=existing["status"],
             total_rows=existing["total_rows"],
+            valid_rows=existing["valid_rows"],
             inserted_rows=existing["inserted_rows"],
             updated_rows=existing["updated_rows"],
             skipped_rows=existing["skipped_rows"],
             failed_rows=existing["failed_rows"],
-            errors=existing.get("errors", []),
-            duration_seconds=0.0,
+            errors=existing["errors"],
         )
 
-    # Parsear CSV
+    # Ejecutar pipeline completo
+    pipeline = IngestionPipeline()
+
     try:
-        rows = parse_csv(io.BytesIO(content))
+        async with AsyncSessionLocal() as session:
+            result = await pipeline.process_csv(
+                session=session,
+                tenant_id=tenant_id,
+                file_content=content,
+                filename=filename,
+            )
     except Exception as exc:
-        logger.error("ingestion_parse_failed", tenant_id=tenant_id, error=str(exc))
-        raise HTTPException(status_code=400, detail=f"Error parseando CSV: {exc}")
-
-    if not rows:
-        raise HTTPException(status_code=400, detail="CSV no contiene filas válidas")
-
-    # Ejecutar pipeline
-    ingestion_id = str(uuid4())
-    logger.info("ingestion_pipeline_start", tenant_id=tenant_id, ingestion_id=ingestion_id, rows=len(rows))
-
-    try:
-        result = await run_ingestion_pipeline(
-            ingestion_id=ingestion_id,
+        logger.exception(
+            "ingestion_pipeline_failed",
             tenant_id=tenant_id,
             filename=filename,
-            file_checksum=checksum,
-            rows=rows,
+            error=str(exc),
         )
-    except Exception as exc:
-        logger.error("ingestion_pipeline_failed", tenant_id=tenant_id, ingestion_id=ingestion_id, error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Error en pipeline: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error en pipeline de ingestion: {exc}",
+        )
 
     logger.info(
-        "ingestion_pipeline_complete",
+        "ingestion_complete",
         tenant_id=tenant_id,
-        ingestion_id=ingestion_id,
-        inserted=result["inserted_rows"],
-        updated=result["updated_rows"],
-        skipped=result["skipped_rows"],
-        failed=result["failed_rows"],
+        filename=filename,
+        status=result.status,
+        inserted=result.inserted_rows,
+        updated=result.updated_rows,
+        skipped=result.skipped_rows,
+        failed=result.failed_rows,
     )
 
     return IngestionResponse(
-        ingestion_id=ingestion_id,
-        filename=filename,
+        ingestion_id=result.filename,  # pipeline retorna IngestionResult con filename
+        filename=result.filename,
         file_checksum=checksum,
-        status=result["status"],
-        total_rows=result["total_rows"],
-        inserted_rows=result["inserted_rows"],
-        updated_rows=result["updated_rows"],
-        skipped_rows=result["skipped_rows"],
-        failed_rows=result["failed_rows"],
-        errors=result.get("errors", []),
-        duration_seconds=result.get("duration_seconds", 0.0),
+        status=result.status,
+        total_rows=result.total_rows,
+        valid_rows=result.valid_rows,
+        inserted_rows=result.inserted_rows,
+        updated_rows=result.updated_rows,
+        skipped_rows=result.skipped_rows,
+        failed_rows=result.failed_rows,
+        errors=result.errors,
     )
 
 
@@ -181,13 +188,11 @@ async def list_ingestions(
     offset: int = 0,
 ) -> list[IngestionListItem]:
     """Lista las ingestions del tenant ordenadas por fecha descendente."""
-    tenant_id = tenant["id"]
-    
     from sqlalchemy import select
-    from src.app.db.models.ingestion import IngestionLog
-    from src.app.db.engine import async_session_maker
 
-    async with async_session_maker() as session:
+    tenant_id = tenant["id"]
+
+    async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(IngestionLog)
             .where(IngestionLog.tenant_id == tenant_id)
@@ -202,8 +207,10 @@ async def list_ingestions(
             ingestion_id=str(log.id),
             filename=log.filename,
             status=log.status,
-            created_at=log.created_at,
+            created_at=str(log.created_at),
             total_rows=log.total_rows or 0,
+            inserted_rows=log.inserted_rows or 0,
+            updated_rows=log.updated_rows or 0,
         )
         for log in logs
     ]
@@ -215,133 +222,174 @@ async def get_ingestion(
     tenant: dict = Depends(get_current_tenant),
 ) -> IngestionResponse:
     """Obtiene el detalle de una ingestion específica."""
-    tenant_id = tenant["id"]
-    
     from sqlalchemy import select
-    from src.app.db.models.ingestion import IngestionLog
-    from src.app.db.engine import async_session_maker
 
-    async with async_session_maker() as session:
+    tenant_id = tenant["id"]
+
+    async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(IngestionLog)
-            .where(IngestionLog.id == ingestion_id)
-            .where(IngestionLog.tenant_id == tenant_id)
+            .where(
+                IngestionLog.id == ingestion_id,
+                IngestionLog.tenant_id == tenant_id,
+            )
         )
         log = result.scalar_one_or_none()
 
     if not log:
-        raise HTTPException(status_code=404, detail="Ingestion no encontrada")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ingestion '{ingestion_id}' no encontrada",
+        )
 
     return IngestionResponse(
         ingestion_id=str(log.id),
         filename=log.filename,
-        file_checksum=log.file_checksum,
+        file_checksum=log.file_checksum or "",
         status=log.status,
         total_rows=log.total_rows or 0,
+        valid_rows=log.valid_rows or 0,
         inserted_rows=log.inserted_rows or 0,
         updated_rows=log.updated_rows or 0,
         skipped_rows=log.skipped_rows or 0,
         failed_rows=log.failed_rows or 0,
-        errors=_parse_errors(log.errors),
-        duration_seconds=0.0,
+        errors=log.errors_list,  # property definido en el modelo
     )
 
 
-# ── Helpers ────────────────────────────────────────────────────────
+# ── Helpers Privados ──────────────────────────────────────────────
 
-async def _find_existing_ingestion(tenant_id: str, checksum: str) -> dict | None:
-    """Busca ingestion previa con mismo checksum para idempotencia."""
+async def _find_existing_ingestion(
+    tenant_id: str,
+    checksum: str,
+) -> dict | None:
+    """Busca ingestion previa con mismo checksum (idempotencia)."""
     from sqlalchemy import select
-    from src.app.db.models.ingestion import IngestionLog
-    from src.app.db.engine import async_session_maker
 
-    async with async_session_maker() as session:
+    async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(IngestionLog)
-            .where(IngestionLog.tenant_id == tenant_id)
-            .where(IngestionLog.file_checksum == checksum)
+            .where(
+                IngestionLog.tenant_id == tenant_id,
+                IngestionLog.file_checksum == checksum,
+            )
             .order_by(IngestionLog.created_at.desc())
+            .limit(1)
         )
         log = result.scalar_one_or_none()
-        if not log:
-            return None
-        return {
-            "id": str(log.id),
-            "status": log.status,
-            "total_rows": log.total_rows or 0,
-            "inserted_rows": log.inserted_rows or 0,
-            "updated_rows": log.updated_rows or 0,
-            "skipped_rows": log.skipped_rows or 0,
-            "failed_rows": log.failed_rows or 0,
-            "errors": _parse_errors(log.errors),
-        }
+
+    if not log:
+        return None
+
+    return {
+        "id": str(log.id),
+        "status": log.status,
+        "total_rows": log.total_rows or 0,
+        "valid_rows": log.valid_rows or 0,
+        "inserted_rows": log.inserted_rows or 0,
+        "updated_rows": log.updated_rows or 0,
+        "skipped_rows": log.skipped_rows or 0,
+        "failed_rows": log.failed_rows or 0,
+        "errors": log.errors_list,
+    }
 
 
 def _parse_errors(errors_raw: str | None) -> list[str]:
-    """Parsea errores desde JSON string."""
+    """Parsea errores desde JSON string almacenado en DB."""
     if not errors_raw:
         return []
-    import json
     try:
         parsed = json.loads(errors_raw)
         if isinstance(parsed, list):
-            return parsed
-    except json.JSONDecodeError:
+            return [str(e) for e in parsed]
+    except (json.JSONDecodeError, ValueError):
         pass
     return []
 
 
-# ── Smoke Test ─────────────────────────────────────────────────────
-if __name__ == "__main__":
-    print("🔥 Smoke Test — api/v1/ingestion.py")
+# ── Smoke Tests ───────────────────────────────────────────────────
 
-    # Test 1: Schemas validan correctamente
+if __name__ == "__main__":
+    print("🔥 Smoke Tests — api/v1/ingestion.py\n")
+
+    # Test 1: IngestionResponse schema
     resp = IngestionResponse(
         ingestion_id="test-001",
         filename="propiedades.csv",
         file_checksum="a" * 64,
         status="success",
         total_rows=100,
+        valid_rows=98,
         inserted_rows=50,
         updated_rows=30,
-        skipped_rows=20,
-        failed_rows=0,
-        duration_seconds=2.5,
+        skipped_rows=18,
+        failed_rows=2,
+        errors=["Fila 5: precio inválido", "Fila 23: tipo desconocido"],
     )
     assert resp.total_rows == 100
     assert resp.status == "success"
-    print("  ✅ IngestionResponse schema válido")
+    assert len(resp.errors) == 2
+    print("✅ IngestionResponse schema válido")
 
-    # Test 2: IngestionListItem
+    # Test 2: IngestionListItem schema
     item = IngestionListItem(
         ingestion_id="test-002",
         filename="casas.csv",
         status="partial",
-        created_at="2026-05-07T15:00:00",
+        created_at="2027-05-07T15:00:00",
         total_rows=50,
+        inserted_rows=30,
+        updated_rows=10,
     )
     assert item.status == "partial"
-    print("  ✅ IngestionListItem schema válido")
+    assert item.inserted_rows == 30
+    print("✅ IngestionListItem schema válido")
 
-    # Test 3: Router instanciado
-    assert router is not None
+    # Test 3: Router con prefix correcto
     assert router.prefix == "/ingestion"
-    print("  ✅ Router instanciado con prefix correcto")
+    print("✅ Router prefix='/ingestion'")
 
-    # Test 4: _parse_errors
+    # Test 4: _parse_errors casos
     assert _parse_errors(None) == []
+    assert _parse_errors("") == []
     assert _parse_errors('["error 1", "error 2"]') == ["error 1", "error 2"]
-    assert _parse_errors("invalid") == []
-    print("  ✅ _parse_errors correcto")
+    assert _parse_errors("invalid json") == []
+    assert _parse_errors('["single error"]') == ["single error"]
+    print("✅ _parse_errors maneja todos los casos")
 
-    # Test 5: file_checksum es determinístico
+    # Test 5: file_checksum importado correctamente
     from src.app.ingestion.hasher import file_checksum
-    data = b"test content"
+    data = b"test csv content para margarita"
     c1 = file_checksum(data)
     c2 = file_checksum(data)
-    assert c1 == c2
-    assert len(c1) == 64
-    print("  ✅ file_checksum determinístico")
+    assert c1 == c2, "Debe ser determinístico"
+    assert len(c1) == 64, f"SHA-256 debe ser 64 chars, got {len(c1)}"
+    assert c1 != file_checksum(b"otro contenido"), "Archivos distintos → hashes distintos"
+    print("✅ file_checksum determinístico y correcto")
 
-    print("\n🎉 Todos los smoke tests pasaron")
+    # Test 6: parse_properties_csv importado correctamente
+    from src.app.ingestion.parser import parse_properties_csv
+    assert callable(parse_properties_csv)
+    print("✅ parse_properties_csv importado correctamente")
+
+    # Test 7: IngestionPipeline importado correctamente
+    from src.app.ingestion.pipeline import IngestionPipeline
+    pipeline = IngestionPipeline()
+    assert hasattr(pipeline, "process_csv")
+    import inspect
+    assert inspect.iscoroutinefunction(pipeline.process_csv)
+    print("✅ IngestionPipeline con process_csv async")
+
+    # Test 8: IngestionLog importado correctamente
+    from src.app.db.models.ingestion_log import IngestionLog
+    assert hasattr(IngestionLog, "errors_list"), \
+        "IngestionLog debe tener property errors_list"
+    print("✅ IngestionLog con errors_list property")
+
+    # Test 9: AsyncSessionLocal importado correctamente
+    from src.app.db.engine import AsyncSessionLocal
+    assert AsyncSessionLocal is not None
+    print("✅ AsyncSessionLocal importado correctamente")
+
+    print("\n🎉 Todos los smoke tests pasaron ✅")
     print("   Nota: Tests de integración requieren DB y archivo CSV real")
