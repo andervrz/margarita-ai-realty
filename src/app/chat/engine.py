@@ -1,18 +1,19 @@
 # src/app/chat/engine.py
 """Chat Engine — motor conversacional end-to-end.
 
-Orquestador principal del flujo conversacional.
+Orquestador principal del flujo conversacional:
+  1. Memory Load — restaura sesión desde RAM o DB
+  2. Language Detection — detecta ES/EN del mensaje
+  3. Hybrid Search — busca propiedades relevantes
+  4. LLM Call — genera respuesta natural
+  5. Qualification — calcula score del lead
+  6. Response Assembly — ensambla respuesta + preguntas
+  7. Persistence — guarda mensajes en DB
 
-Mejoras aplicadas:
-  - Imports corregidos y consistentes
-  - ChatResponse migrado a dataclass
-  - Integración real con language.py
-  - Manejo seguro de errores DB/LLM
-  - Persistencia robusta con rollback
-  - Context truncation defensivo
-  - Compatibilidad con SearchResult real
-  - Mejor observabilidad
-  - Menos lógica duplicada
+Principios:
+  - El LLM genera lenguaje — Python decide lógica
+  - SQLite tiene la verdad de propiedades
+  - Fallo en un componente no rompe el flujo completo
 """
 
 from __future__ import annotations
@@ -25,10 +26,7 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.chat.language import (
-    detect_language,
-    should_switch_language,
-)
+from src.app.chat.language import detect_language, should_switch_language
 from src.app.chat.memory import (
     SessionMemory,
     build_context_messages,
@@ -39,32 +37,29 @@ from src.app.chat.memory import (
 from src.app.core.config import get_settings
 from src.app.core.logging import get_logger
 from src.app.db.models.message import Message
-from src.app.llm.client import (
-    LLMNoProviderAvailable,
-    chat_completion,
-)
-from src.app.llm.prompts.booking import (
-    get_booking_prompt,
-)
+from src.app.llm.client import LLMNoProviderAvailable, chat_completion
+from src.app.llm.prompts.booking import get_booking_prompt
 from src.app.llm.prompts.system_en import get_system_prompt_en
 from src.app.llm.prompts.system_es import get_system_prompt_es
 from src.app.llm.router import get_chat_model
-from src.app.qualification.scorer import (
-    QualificationResult,
-    calculate_qualification_score,
-)
+from src.app.qualification.scorer import QualificationResult, calculate_qualification_score
 from src.app.schemas.search import SearchResult
 from src.app.search.hybrid import hybrid_search
 
-logger = get_logger("chat.engine")
+logger = get_logger(__name__)
+
+# ── Booking Steps ─────────────────────────────────────────────────
+# DURATION eliminado — la duración la define el tenant, no el usuario
+
+BOOKING_STEPS_ES = ["nombre", "email", "phone", "date", "time", "notes", "confirm"]
+BOOKING_STEPS_EN = ["name", "email", "phone", "date", "time", "notes", "confirm"]
 
 
 # ── ChatResponse ──────────────────────────────────────────────────
 
-@dataclass(slots=True)
+@dataclass
 class ChatResponse:
     """Respuesta serializable del chat engine."""
-
     text: str
     qualification_score: int
     qualification_stage: str
@@ -87,23 +82,34 @@ class ChatResponse:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class _ResponseAssembly:
-    """Resultado interno del ensamblado final."""
-
+    """Resultado interno del ensamblado de respuesta."""
     final_text: str
 
 
-# ── Función principal ─────────────────────────────────────────────
+# ── Función Principal ─────────────────────────────────────────────
 
 async def process_message(
     session_id: str,
     tenant_id: str,
     user_message: str,
     session: AsyncSession,
+    tenant_name: str = "Inmobiliaria Margarita",
 ) -> ChatResponse:
-    """Procesa mensaje del usuario end-to-end."""
+    """
+    Procesa mensaje del usuario end-to-end.
 
+    Args:
+        session_id: ID de sesión del usuario.
+        tenant_id: ID del tenant (aislamiento).
+        user_message: Texto del mensaje del usuario.
+        session: Sesión SQLAlchemy async activa.
+        tenant_name: Nombre del tenant para el system prompt.
+
+    Returns:
+        ChatResponse con respuesta y estado de sesión.
+    """
     start_time = time.perf_counter()
     settings = get_settings()
 
@@ -114,23 +120,20 @@ async def process_message(
     )
 
     # ── Validación básica ──────────────────────────────────────
-
     user_message = user_message.strip()
-
     if not user_message:
         return ChatResponse(
-            text="Tu mensaje está vacío.",
+            text="Tu mensaje está vacío. ¿En qué puedo ayudarte?",
             qualification_score=0,
             qualification_stage="explore",
             is_booking_active=False,
             booking_step=None,
             properties_found=0,
-            duration_ms=0,
+            duration_ms=0.0,
             language="es",
         )
 
     # ── 1. Memory Load ─────────────────────────────────────────
-
     memory = await get_session_memory(
         session=session,
         session_id=session_id,
@@ -138,36 +141,27 @@ async def process_message(
     )
 
     # ── 2. Language Detection ──────────────────────────────────
-
     lang_result = detect_language(user_message)
-
     if should_switch_language(memory.language, lang_result):
         logger.info(
             "language_switched",
             session_id=session_id,
-            old_language=memory.language,
-            new_language=lang_result.detected,
+            old=memory.language,
+            new=lang_result.detected,
         )
         memory.language = lang_result.detected
 
     language = memory.language
 
-    # ── 3. Registrar mensaje usuario ───────────────────────────
-
-    now_iso = datetime.now(timezone.utc).isoformat()
-
-    memory.messages.append(
-        {
-            "role": "user",
-            "content": user_message,
-            "timestamp": now_iso,
-        }
-    )
-
+    # ── 3. Registrar mensaje usuario en RAM ────────────────────
+    memory.messages.append({
+        "role": "user",
+        "content": user_message,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
     update_session_activity(memory)
 
     # ── 4. Hybrid Search ───────────────────────────────────────
-
     try:
         search_result: SearchResult = await hybrid_search(
             session=session,
@@ -175,104 +169,68 @@ async def process_message(
             user_query=user_message,
             session_id=session_id,
             language=language,
-            max_results=settings.max_search_results,
+            max_results=settings.max_properties_per_response,  # campo correcto de Settings
         )
-
     except Exception as exc:
-        logger.exception(
-            "hybrid_search_failed",
-            session_id=session_id,
-            error=str(exc),
-        )
-
+        logger.exception("hybrid_search_failed", session_id=session_id, error=str(exc))
         search_result = SearchResult(
             properties=[],
             source="search_error",
             total_found=0,
-            filters_applied={},
-            execution_metadata={"error": str(exc)},
         )
 
-    # ── 5. Build Context ───────────────────────────────────────
-
-    llm_messages = _build_context_messages(
+    # ── 5. Build LLM Context ───────────────────────────────────
+    llm_messages = _build_llm_messages(
         memory=memory,
         search_result=search_result,
         language=language,
-        tenant_name="Esparta Inmuebles",
+        tenant_name=tenant_name,
+        max_messages=settings.max_messages_in_context,
     )
 
     # ── 6. LLM Call ────────────────────────────────────────────
-
     try:
         model = get_chat_model(tenant_plan="pro")
-
         response_text = await chat_completion(
             messages=llm_messages,
             model=model,
             timeout=settings.llm_timeout,
         )
-
     except LLMNoProviderAvailable:
-        logger.error(
-            "llm_provider_unavailable",
-            session_id=session_id,
-        )
-
-        response_text = _get_fallback_response(
-            language=language,
-            reason="llm_unavailable",
-        )
-
+        logger.error("llm_provider_unavailable", session_id=session_id)
+        response_text = _get_fallback_response(language, "llm_unavailable")
     except Exception as exc:
-        logger.exception(
-            "llm_unexpected_error",
-            session_id=session_id,
-            error=str(exc),
-        )
+        logger.exception("llm_unexpected_error", session_id=session_id, error=str(exc))
+        response_text = _get_fallback_response(language, "llm_unavailable")
 
-        response_text = _get_fallback_response(
-            language=language,
-            reason="llm_unavailable",
-        )
-
-    # ── 7. Qualification ───────────────────────────────────────
-
+    # ── 7. Lead Qualification ──────────────────────────────────
     qual_result: QualificationResult = calculate_qualification_score(
         messages=memory.messages,
         current_query=user_message,
         language=language,
     )
-
     memory.qualification_score = qual_result.total_score
 
     # ── 8. Response Assembly ───────────────────────────────────
-
     response_data = _assemble_response(
         response_text=response_text,
         qual_result=qual_result,
         memory=memory,
-        search_result=search_result,
         language=language,
     )
 
-    # ── 9. Registrar respuesta assistant ───────────────────────
-
-    memory.messages.append(
-        {
-            "role": "assistant",
-            "content": response_data.final_text,
-            "has_properties": search_result.total_found > 0,
-            "property_count": search_result.total_found,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-    )
+    # ── 9. Registrar respuesta assistant en RAM ────────────────
+    memory.messages.append({
+        "role": "assistant",
+        "content": response_data.final_text,
+        "has_properties": search_result.total_found > 0,
+        "property_count": search_result.total_found,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
 
     # ── 10. Persistencia ───────────────────────────────────────
-
     try:
         await save_session_memory(session, memory)
-
         await _persist_messages(
             session=session,
             session_id=session_id,
@@ -280,17 +238,13 @@ async def process_message(
             user_content=user_message,
             assistant_content=response_data.final_text,
         )
-
     except SQLAlchemyError as exc:
         logger.exception(
             "chat_persistence_failed",
             session_id=session_id,
             error=str(exc),
         )
-
         await session.rollback()
-
-    # ── Finalización ───────────────────────────────────────────
 
     duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -299,8 +253,8 @@ async def process_message(
         session_id=session_id,
         tenant_id=tenant_id,
         language=language,
-        qualification_score=qual_result.total_score,
-        qualification_stage=qual_result.stage,
+        score=qual_result.total_score,
+        stage=qual_result.stage,
         search_source=search_result.source,
         properties_found=search_result.total_found,
         duration_ms=round(duration_ms, 2),
@@ -320,23 +274,23 @@ async def process_message(
 
 # ── Context Builder ───────────────────────────────────────────────
 
-def _build_context_messages(
+def _build_llm_messages(
     memory: SessionMemory,
     search_result: SearchResult,
     language: str,
     tenant_name: str,
+    max_messages: int,
 ) -> list[dict[str, str]]:
-    """Construye mensajes OpenAI-format."""
+    """
+    Construye lista de mensajes en formato OpenAI para el LLM.
 
-    settings = get_settings()
-
+    Estructura:
+      1. System prompt con contexto de propiedades
+      2. Historial de conversación truncado
+    """
     conversation_history = _format_conversation_history(
-        build_context_messages(
-            memory=memory,
-            max_messages=settings.max_messages_in_context,
-        )
+        build_context_messages(memory=memory, max_messages=max_messages)
     )
-
     properties_context = _format_properties_context(search_result)
 
     if language == "en":
@@ -354,108 +308,75 @@ def _build_context_messages(
             user_message="",
         )
 
-    messages: list[dict[str, str]] = [
-        {
-            "role": "system",
-            "content": system_prompt,
-        }
-    ]
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
 
-    recent_messages = build_context_messages(
-        memory=memory,
-        max_messages=settings.max_messages_in_context,
-    )
-
-    for msg in recent_messages:
-        role = msg.get("role")
-        content = str(msg.get("content", ""))[:4000]
-
+    # Agregar historial reciente — solo role y content
+    recent = build_context_messages(memory=memory, max_messages=max_messages)
+    for msg in recent:
+        role = msg.get("role", "")
         if role not in {"user", "assistant"}:
             continue
-
-        messages.append(
-            {
-                "role": role,
-                "content": content,
-            }
-        )
+        content = str(msg.get("content", ""))[:4000]  # Truncar payloads largos
+        messages.append({"role": role, "content": content})
 
     return messages
 
 
 # ── Formatters ────────────────────────────────────────────────────
 
-def _format_conversation_history(
-    messages: list[dict[str, Any]],
-) -> str:
-    """Formatea historial compacto para prompts."""
-
+def _format_conversation_history(messages: list[dict[str, Any]]) -> str:
+    """Formatea historial compacto para el system prompt."""
     if not messages:
         return "Conversación iniciada."
 
     lines: list[str] = []
-
     for msg in messages:
         role = "Usuario" if msg["role"] == "user" else "Asistente"
-
         content = str(msg.get("content", ""))
-
         if len(content) > 200:
             content = content[:200] + "..."
-
         lines.append(f"{role}: {content}")
 
     return "\n".join(lines)
 
 
-def _format_properties_context(
-    result: SearchResult,
-) -> str:
-    """Formatea propiedades verificadas."""
-
+def _format_properties_context(result: SearchResult) -> str:
+    """
+    Formatea propiedades verificadas para el system prompt.
+    El LLM solo puede hablar de propiedades que aparezcan aquí.
+    """
     if not result.properties:
         return "No hay propiedades que coincidan con los criterios actuales."
 
-    lines: list[str] = []
-
-    lines.append(
-        f"Encontradas {result.total_found} propiedades verificadas:"
-    )
+    lines: list[str] = [
+        f"Encontradas {result.total_found} propiedades verificadas en el catálogo:"
+    ]
 
     for idx, prop in enumerate(result.properties, start=1):
-
         title = prop.get("title", "Propiedad")
-
         line = f"{idx}. {title}"
 
         if prop.get("price_usd"):
             line += f" — ${prop['price_usd']:,.0f} USD"
-
         if prop.get("location_zone"):
             line += f" ({prop['location_zone']})"
-
         if prop.get("bedrooms"):
             line += f" | {prop['bedrooms']}H"
-
         if prop.get("bathrooms"):
             line += f"/{prop['bathrooms']}B"
-
         if prop.get("area_m2"):
             line += f" | {prop['area_m2']}m²"
-
         if prop.get("vista_al_mar"):
             line += " | 🌊 Vista al mar"
-
         if prop.get("frente_playa"):
             line += " | 🏖️ Frente playa"
-
         if prop.get("uso_vacacional"):
             line += " | 💰 Ideal inversión"
 
         lines.append(line)
 
-        description = prop.get("description_es")
-
+        # Descripción corta si existe
+        description = prop.get("description_es") or prop.get("description_en")
         if description and len(description) < 150:
             lines.append(f"   {description}")
 
@@ -468,107 +389,67 @@ def _assemble_response(
     response_text: str,
     qual_result: QualificationResult,
     memory: SessionMemory,
-    search_result: SearchResult,
     language: str,
 ) -> _ResponseAssembly:
-    """Ensambla respuesta final."""
+    """
+    Ensambla la respuesta final según el stage de calificación.
 
+    Estados:
+      - book:    activa booking flow
+      - qualify: agrega pregunta de calificación
+      - explore: respuesta directa sin modificaciones
+    """
+    # Si ya está en booking flow — continuar el flujo
     if memory.is_booking_active:
-        return _handle_booking_flow(
-            memory=memory,
-            response_text=response_text,
-            language=language,
-        )
+        return _advance_booking_flow(memory, response_text, language)
 
+    # Activar booking flow
     if qual_result.stage == "book":
-
         memory.is_booking_active = True
-        memory.booking_step = "nombre"
+        steps = BOOKING_STEPS_ES if language == "es" else BOOKING_STEPS_EN
+        memory.booking_step = steps[0]
 
-        booking_prompt = get_booking_prompt(
-            step="nombre",
-            language=language,
-        )
+        booking_prompt = get_booking_prompt(step=steps[0], language=language)
+        return _ResponseAssembly(final_text=f"{response_text}\n\n{booking_prompt}")
 
-        return _ResponseAssembly(
-            final_text=f"{response_text}\n\n{booking_prompt}"
-        )
-
+    # Agregar pregunta de calificación
     if qual_result.stage == "qualify":
-
-        question = _get_qualification_question(
-            qual_result=qual_result,
-            language=language,
-        )
-
+        question = _get_qualification_question(qual_result, language)
         if question:
-            return _ResponseAssembly(
-                final_text=f"{response_text}\n\n{question}"
-            )
+            return _ResponseAssembly(final_text=f"{response_text}\n\n{question}")
 
+    # Exploración libre
     return _ResponseAssembly(final_text=response_text)
 
 
-def _handle_booking_flow(
+def _advance_booking_flow(
     memory: SessionMemory,
     response_text: str,
     language: str,
 ) -> _ResponseAssembly:
-    """Flujo simplificado de booking."""
-
-    steps_es = [
-        "nombre",
-        "email",
-        "phone",
-        "date",
-        "time",
-        "duration",
-        "notes",
-        "confirm",
-    ]
-
-    steps_en = [
-        "name",
-        "email",
-        "phone",
-        "date",
-        "time",
-        "duration",
-        "notes",
-        "confirm",
-    ]
-
-    steps = steps_es if language == "es" else steps_en
-
+    """Avanza al siguiente paso del flujo de booking."""
+    steps = BOOKING_STEPS_ES if language == "es" else BOOKING_STEPS_EN
     current_step = memory.booking_step or steps[0]
 
     try:
         idx = steps.index(current_step)
-
-        if idx >= len(steps) - 1:
-            memory.is_booking_active = False
-            memory.booking_step = None
-
-            return _ResponseAssembly(final_text=response_text)
-
-        next_step = steps[idx + 1]
-
-        memory.booking_step = next_step
-
-        prompt = get_booking_prompt(
-            step=next_step,
-            language=language,
-        )
-
-        return _ResponseAssembly(
-            final_text=f"{response_text}\n\n{prompt}"
-        )
-
     except ValueError:
-
+        # Paso desconocido — reiniciar
         memory.booking_step = steps[0]
-
         return _ResponseAssembly(final_text=response_text)
+
+    # Último paso — booking completado
+    if idx >= len(steps) - 1:
+        memory.is_booking_active = False
+        memory.booking_step = None
+        return _ResponseAssembly(final_text=response_text)
+
+    # Avanzar al siguiente paso
+    next_step = steps[idx + 1]
+    memory.booking_step = next_step
+
+    prompt = get_booking_prompt(step=next_step, language=language)
+    return _ResponseAssembly(final_text=f"{response_text}\n\n{prompt}")
 
 
 # ── Qualification ─────────────────────────────────────────────────
@@ -577,46 +458,44 @@ def _get_qualification_question(
     qual_result: QualificationResult,
     language: str,
 ) -> str | None:
-    """Pregunta suave de calificación."""
+    """Genera pregunta suave de calificación según señales faltantes."""
+    # Usar las preguntas sugeridas del scorer si están disponibles
+    if qual_result.suggested_questions:
+        return qual_result.suggested_questions[0]
 
+    # Fallback genérico
     if language == "en":
         return (
-            "Do you have any preferred area or budget in mind? "
-            "It helps me show better options."
+            "Do you have a preferred area or budget in mind? "
+            "It helps me show you the best options."
         )
-
     return (
-        "¿Tienes alguna preferencia de zona o presupuesto en mente? "
-        "Me ayuda a mostrarte mejores opciones."
+        "¿Tienes alguna preferencia de zona o presupuesto? "
+        "Me ayuda a mostrarte las mejores opciones."
     )
 
 
 # ── Fallbacks ─────────────────────────────────────────────────────
 
-def _get_fallback_response(
-    language: str,
-    reason: str,
-) -> str:
-    """Fallback cuando LLM falla."""
-
+def _get_fallback_response(language: str, reason: str) -> str:
+    """Respuesta de fallback cuando el LLM no está disponible."""
     responses = {
         "es": {
             "llm_unavailable": (
                 "Estoy teniendo problemas técnicos momentáneos. "
                 "Por favor, intenta nuevamente en unos minutos. 📞"
-            )
+            ),
         },
         "en": {
             "llm_unavailable": (
                 "I'm experiencing temporary technical issues. "
                 "Please try again in a few minutes. 📞"
-            )
+            ),
         },
     }
-
-    return responses.get(language, responses["es"]).get(
-        reason,
-        responses["es"]["llm_unavailable"],
+    return (
+        responses.get(language, responses["es"])
+        .get(reason, responses["es"]["llm_unavailable"])
     )
 
 
@@ -629,41 +508,39 @@ async def _persist_messages(
     user_content: str,
     assistant_content: str,
 ) -> None:
-    """Persistencia de mensajes."""
+    """Persiste par de mensajes (user + assistant) en DB."""
+    now = datetime.now(timezone.utc).isoformat()
 
     user_msg = Message(
         session_id=session_id,
         tenant_id=tenant_id,
         role="user",
         content=user_content,
+        created_at=now,
     )
-
     assistant_msg = Message(
         session_id=session_id,
         tenant_id=tenant_id,
         role="assistant",
         content=assistant_content,
+        created_at=now,
     )
 
     session.add(user_msg)
     session.add(assistant_msg)
-
     await session.commit()
 
 
 # ── Smoke Tests ───────────────────────────────────────────────────
 
 if __name__ == "__main__":
-
     import asyncio
     from unittest.mock import MagicMock
 
     async def _test():
+        print("🔥 Smoke Tests — chat/engine.py\n")
 
-        print("🔥 Smoke Test — chat/engine.py\n")
-
-        # ── Test 1 ────────────────────────────────────────────
-
+        # Test 1: ChatResponse serializable
         resp = ChatResponse(
             text="Hola",
             qualification_score=45,
@@ -674,130 +551,108 @@ if __name__ == "__main__":
             duration_ms=100.5,
             language="es",
         )
-
-        assert resp.to_dict()["language"] == "es"
-
+        d = resp.to_dict()
+        assert d["language"] == "es"
+        assert d["qualification_score"] == 45
         print("✅ ChatResponse serializable")
 
-        # ── Test 2 ────────────────────────────────────────────
+        # Test 2: Fallback responses
+        assert "técnicos" in _get_fallback_response("es", "llm_unavailable")
+        assert "technical" in _get_fallback_response("en", "llm_unavailable")
+        print("✅ Fallback ES y EN")
 
-        fallback = _get_fallback_response(
-            "es",
-            "llm_unavailable",
-        )
-
-        assert "problemas técnicos" in fallback
-
-        print("✅ Fallback ES")
-
-        # ── Test 3 ────────────────────────────────────────────
-
-        history = _format_conversation_history(
-            [
-                {
-                    "role": "user",
-                    "content": "Hola",
-                },
-                {
-                    "role": "assistant",
-                    "content": "Bienvenido",
-                },
-            ]
-        )
-
+        # Test 3: Conversation history
+        history = _format_conversation_history([
+            {"role": "user", "content": "Hola"},
+            {"role": "assistant", "content": "Bienvenido"},
+        ])
         assert "Usuario: Hola" in history
+        assert "Asistente: Bienvenido" in history
+        print("✅ Conversation history formateada")
 
-        print("✅ Conversation history")
-
-        # ── Test 4 ────────────────────────────────────────────
-
+        # Test 4: Truncado de historial largo
         long_text = "a" * 300
-
-        history_long = _format_conversation_history(
-            [
-                {
-                    "role": "user",
-                    "content": long_text,
-                }
-            ]
-        )
-
+        history_long = _format_conversation_history([
+            {"role": "user", "content": long_text}
+        ])
         assert "..." in history_long
+        print("✅ Truncado de historial")
 
-        print("✅ Truncado historial")
-
-        # ── Test 5 ────────────────────────────────────────────
-
+        # Test 5: Properties context vacío
         empty_result = MagicMock()
         empty_result.properties = []
         empty_result.total_found = 0
-
         ctx = _format_properties_context(empty_result)
-
         assert "No hay propiedades" in ctx
-
         print("✅ Properties context vacío")
 
-        # ── Test 6 ────────────────────────────────────────────
-
+        # Test 6: Properties context con datos
         mock_result = MagicMock()
         mock_result.total_found = 1
-        mock_result.properties = [
-            {
-                "title": "Apartamento Pampatar",
-                "price_usd": 120000,
-                "bedrooms": 2,
-                "bathrooms": 2,
-            }
-        ]
-
+        mock_result.properties = [{
+            "title": "Apartamento Pampatar",
+            "price_usd": 120000,
+            "location_zone": "Pampatar",
+            "bedrooms": 2,
+            "bathrooms": 2,
+            "vista_al_mar": True,
+        }]
         ctx2 = _format_properties_context(mock_result)
-
         assert "Apartamento Pampatar" in ctx2
+        assert "$120,000" in ctx2
+        assert "Vista al mar" in ctx2
+        print("✅ Properties context con datos")
 
-        print("✅ Properties context con data")
-
-        # ── Test 7 ────────────────────────────────────────────
-
-        memory = SessionMemory(
-            session_id="s1",
-            tenant_id="t1",
-        )
-
+        # Test 7: Response assembly — stage qualify
+        memory = SessionMemory(session_id="s1", tenant_id="t1")
         qual = MagicMock()
         qual.stage = "qualify"
-
+        qual.suggested_questions = ["¿Tienes presupuesto en mente?"]
         result = _assemble_response(
             response_text="Aquí tienes opciones",
             qual_result=qual,
             memory=memory,
-            search_result=mock_result,
             language="es",
         )
-
         assert "presupuesto" in result.final_text
+        print("✅ Assembly con qualify question")
 
-        print("✅ Qualification assembly")
+        # Test 8: Booking flow — activación
+        memory_book = SessionMemory(session_id="s2", tenant_id="t1")
+        qual_book = MagicMock()
+        qual_book.stage = "book"
+        qual_book.suggested_questions = []
+        result_book = _assemble_response(
+            response_text="Perfecto",
+            qual_result=qual_book,
+            memory=memory_book,
+            language="es",
+        )
+        assert memory_book.is_booking_active is True
+        assert memory_book.booking_step == "nombre"
+        print("✅ Booking flow activado")
 
-        # ── Test 8 ────────────────────────────────────────────
-
-        memory_booking = SessionMemory(
-            session_id="s2",
+        # Test 9: Booking flow — avance de pasos
+        memory_adv = SessionMemory(
+            session_id="s3",
             tenant_id="t1",
             is_booking_active=True,
             booking_step="nombre",
         )
+        result_adv = _advance_booking_flow(memory_adv, "Gracias", "es")
+        assert memory_adv.booking_step == "email"
+        print("✅ Booking flow avanza al siguiente paso")
 
-        booking_result = _handle_booking_flow(
-            memory=memory_booking,
-            response_text="Perfecto",
-            language="es",
-        )
+        # Test 10: Booking steps no incluyen DURATION
+        assert "duration" not in BOOKING_STEPS_ES
+        assert "duration" not in BOOKING_STEPS_EN
+        print("✅ DURATION eliminado de booking steps")
 
-        assert memory_booking.booking_step == "email"
+        # Test 11: Fallback para idioma desconocido
+        fallback = _get_fallback_response("fr", "llm_unavailable")
+        assert "técnicos" in fallback  # fallback a ES
+        print("✅ Fallback a ES para idioma desconocido")
 
-        print("✅ Booking flow")
-
-        print("\n🎉 Todos los smoke tests pasaron")
+        print("\n🎉 Todos los smoke tests pasaron ✅")
 
     asyncio.run(_test())
