@@ -1,14 +1,14 @@
 # src/app/llm/client.py
 """LLM Client — wrapper async de LiteLLM con retry, timeout y fallback.
 
-Gateway unificado para múltiples providers (Groq primary, Gemini fallback).
-Maneja errores de rate limit, timeout y conexión con reintentos controlados.
+Gateway unificado para Groq (primary) y Gemini (fallback).
+Maneja rate limits, timeouts y errores de conexión con reintentos controlados.
 
 Principios:
   - Una sola API para todos los providers (formato OpenAI via LiteLLM)
-  - Fallback automático provider → provider
-  - Timeout estricto en cada llamada
-  - Sin bloqueo del event loop: todo async/await
+  - Fallback automático Groq → Gemini cuando Groq falla
+  - Timeout estricto en cada llamada — no bloquea el event loop
+  - Backoff exponencial en rate limits
 """
 
 from __future__ import annotations
@@ -22,15 +22,13 @@ from litellm import acompletion
 from src.app.core.config import get_settings
 from src.app.core.logging import get_logger
 
-logger = get_logger()
+logger = get_logger(__name__)
 
-# ── Configuración de LiteLLM ─────────────────────────────────────
-
-# Reducir logging verbose de LiteLLM (solo errores)
+# Reducir logging verbose de LiteLLM — solo errores críticos
 litellm.set_verbose = False
 
 
-# ── Excepciones de dominio ───────────────────────────────────────
+# ── Excepciones de Dominio ────────────────────────────────────────
 
 class LLMError(Exception):
     """Error base del LLM layer."""
@@ -41,26 +39,26 @@ class LLMError(Exception):
 
 
 class LLMRateLimitError(LLMError):
-    """Rate limit alcanzado en provider."""
+    """Rate limit alcanzado en el provider."""
     pass
 
 
 class LLMTimeoutError(LLMError):
-    """Timeout en llamada LLM."""
+    """Timeout en llamada al LLM."""
     pass
 
 
 class LLMProviderError(LLMError):
-    """Error genérico del provider (5xx, auth, etc.)."""
+    """Error genérico del provider (5xx, auth, conexión, etc.)."""
     pass
 
 
 class LLMNoProviderAvailable(Exception):
-    """Todos los providers fallaron."""
+    """Todos los providers del chain fallaron."""
     pass
 
 
-# ── Función principal ─────────────────────────────────────────────
+# ── Función Principal ─────────────────────────────────────────────
 
 async def chat_completion(
     messages: list[dict[str, str]],
@@ -73,36 +71,37 @@ async def chat_completion(
     **kwargs: Any,
 ) -> str:
     """Llama al LLM con retry, timeout y fallback automático.
-    
+
     Args:
-        messages: Lista de mensajes OpenAI-format [{"role": "...", "content": "..."}]
+        messages: Lista de mensajes OpenAI-format.
         model: String LiteLLM (ej: "groq/llama-3.3-70b-versatile").
-               Si None, usa el modelo default del tenant/plan.
-        timeout: Segundos máximos de espera. Si None, usa settings.llm_timeout.
-        temperature: Creatividad (0.0-1.0). Default 0.7 para chatbot.
+               Si None, usa el modelo default según API keys disponibles.
+        timeout: Segundos máximos. Si None, usa settings.llm_timeout.
+        temperature: Creatividad 0.0-1.0. Default 0.7 para chatbot.
         max_tokens: Límite de tokens en respuesta.
         response_format: Schema para Structured Output (JSON).
-        retry_count: Reintentos por provider antes de fallback.
+                         Solo se pasa a LiteLLM si no es None.
+        retry_count: Reintentos por provider antes de pasar al fallback.
         **kwargs: Args adicionales para LiteLLM.
-    
+
     Returns:
-        Texto de respuesta del LLM (content del assistant message).
-    
+        Texto de respuesta del LLM.
+
     Raises:
-        LLMNoProviderAvailable: Si todos los providers fallan.
+        LLMNoProviderAvailable: Si todos los providers del chain fallan.
     """
     settings = get_settings()
-    
-    # Resolver modelo y timeout
-    model = model or _get_default_model()
-    timeout = timeout or settings.llm_timeout
-    
-    # Lista de providers a intentar (primary → fallback chain)
-    providers = _build_provider_chain(model, settings)
-    
+
+    effective_model = model or _get_default_model(settings)
+    effective_timeout = timeout or settings.llm_timeout
+
+    providers = _build_provider_chain(effective_model, settings)
+
     last_error: Exception | None = None
-    
-    for provider_model in providers:
+
+    for provider_idx, provider_model in enumerate(providers):
+        is_last_provider = provider_idx == len(providers) - 1
+
         for attempt in range(retry_count + 1):
             try:
                 logger.info(
@@ -112,40 +111,48 @@ async def chat_completion(
                     max_attempts=retry_count + 1,
                     messages_count=len(messages),
                 )
-                
+
+                # Construir kwargs para LiteLLM
+                # response_format solo se incluye si no es None
+                # — algunos providers rechazan el parámetro cuando es None
+                call_kwargs: dict[str, Any] = {
+                    "model": provider_model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "timeout": effective_timeout,
+                    **kwargs,
+                }
+                if response_format is not None:
+                    call_kwargs["response_format"] = response_format
+
                 response = await asyncio.wait_for(
-                    acompletion(
-                        model=provider_model,
-                        messages=messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        timeout=timeout,
-                        response_format=response_format,
-                        **kwargs,
-                    ),
-                    timeout=timeout + 5,  # Buffer para overhead de LiteLLM
+                    acompletion(**call_kwargs),
+                    timeout=effective_timeout + 5,  # Buffer para overhead de LiteLLM
                 )
-                
+
                 content = response.choices[0].message.content
-                
+
                 logger.info(
                     "llm_call_success",
                     model=provider_model,
                     attempt=attempt + 1,
                     content_length=len(content) if content else 0,
                 )
-                
+
                 return content or ""
-                
+
             except asyncio.TimeoutError:
                 logger.warning(
                     "llm_call_timeout",
                     model=provider_model,
                     attempt=attempt + 1,
-                    timeout=timeout,
+                    timeout=effective_timeout,
                 )
-                last_error = LLMTimeoutError(provider_model, f"timeout after {timeout}s")
-                
+                last_error = LLMTimeoutError(
+                    provider_model, f"timeout after {effective_timeout}s"
+                )
+
             except litellm.RateLimitError as exc:
                 logger.warning(
                     "llm_call_rate_limit",
@@ -154,12 +161,17 @@ async def chat_completion(
                     error=str(exc),
                 )
                 last_error = LLMRateLimitError(provider_model, str(exc))
-                
+
                 # Backoff exponencial antes de retry
                 if attempt < retry_count:
-                    wait = 2 ** attempt  # 1s, 2s
-                    await asyncio.sleep(wait)
-                    
+                    wait_seconds = 2 ** attempt  # 1s, 2s
+                    logger.info(
+                        "llm_rate_limit_backoff",
+                        model=provider_model,
+                        wait_seconds=wait_seconds,
+                    )
+                    await asyncio.sleep(wait_seconds)
+
             except litellm.AuthenticationError as exc:
                 logger.error(
                     "llm_call_auth_error",
@@ -167,9 +179,9 @@ async def chat_completion(
                     error=str(exc),
                 )
                 last_error = LLMProviderError(provider_model, f"auth failed: {exc}")
-                # Auth error: no reintentar, ir directo a fallback
+                # Auth error: no tiene sentido reintentar el mismo provider
                 break
-                
+
             except Exception as exc:
                 logger.error(
                     "llm_call_error",
@@ -179,15 +191,23 @@ async def chat_completion(
                     error=str(exc),
                 )
                 last_error = LLMProviderError(provider_model, str(exc))
-        
-        # Si falló este provider, intentar siguiente en chain
-        logger.info(
-            "llm_provider_failed",
-            model=provider_model,
-            error_type=type(last_error).__name__ if last_error else "unknown",
-            next_provider=providers[providers.index(provider_model) + 1] if provider_model in providers and providers.index(provider_model) < len(providers) - 1 else "none",
-        )
-    
+
+        # Provider agotó sus intentos
+        if not is_last_provider:
+            next_model = providers[provider_idx + 1]
+            logger.info(
+                "llm_provider_failed_trying_next",
+                failed_model=provider_model,
+                next_model=next_model,
+                error_type=type(last_error).__name__ if last_error else "unknown",
+            )
+        else:
+            logger.error(
+                "llm_last_provider_failed",
+                failed_model=provider_model,
+                error_type=type(last_error).__name__ if last_error else "unknown",
+            )
+
     # Todos los providers fallaron
     logger.error(
         "llm_all_providers_failed",
@@ -199,101 +219,149 @@ async def chat_completion(
     )
 
 
-# ── Helpers privados ──────────────────────────────────────────────
+# ── Helpers Privados ──────────────────────────────────────────────
 
-def _get_default_model() -> str:
-    """Retorna modelo default del plan/tenant."""
-    settings = get_settings()
-    # V1: Pro plan usa Groq primary
-    # En V2: resolver desde tenant config
+def _get_default_model(settings: Any) -> str:
+    """Retorna modelo default según API keys disponibles."""
     if settings.groq_api_key:
         return "groq/llama-3.3-70b-versatile"
     if settings.gemini_api_key:
         return "gemini/gemini-2.5-pro"
-    return "groq/llama-3.3-70b-versatile"  # Fallback final
+    # Fallback final — fallará en runtime si no hay key, pero al menos es predecible
+    return "groq/llama-3.3-70b-versatile"
 
 
 def _build_provider_chain(primary_model: str, settings: Any) -> list[str]:
-    """Construye cadena de providers: primary → fallback_1 → ..."""
+    """Construye cadena de providers: primary → fallback si hay API key."""
     chain = [primary_model]
-    
-    # Si primary es Groq, añadir Gemini fallback
+
+    # Groq como primary → Gemini como fallback
     if primary_model.startswith("groq/") and settings.gemini_api_key:
-        # ⚠️ VERIFICAR string exacto en docs.litellm.ai antes de deploy
         chain.append("gemini/gemini-2.5-pro")
-    
-    # Si primary es Gemini, añadir Groq fallback
+
+    # Gemini como primary → Groq como fallback
     elif primary_model.startswith("gemini/") and settings.groq_api_key:
         chain.append("groq/llama-3.3-70b-versatile")
-    
+
     return chain
 
 
-# ── Smoke Test ────────────────────────────────────────────────────
+# ── Smoke Tests ───────────────────────────────────────────────────
+
 if __name__ == "__main__":
     import asyncio
-    from unittest.mock import AsyncMock, patch
-    
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock, patch
+
     async def _test():
-        print("🔥 Smoke Test — llm/client.py")
-        
-        # Test 1: Excepciones de dominio
-        err = LLMError("groq/test", "fail")
+        print("🔥 Smoke Tests — llm/client.py\n")
+
+        # Test 1: Jerarquía de excepciones
+        err = LLMError("groq/test", "fallo")
         assert err.model == "groq/test"
-        assert "fail" in str(err)
-        print("  ✅ LLMError base")
-        
-        err_rl = LLMRateLimitError("groq/test", "rate limit")
-        assert isinstance(err_rl, LLMError)
-        print("  ✅ LLMRateLimitError herencia")
-        
-        err_to = LLMTimeoutError("groq/test", "timeout")
-        assert isinstance(err_to, LLMError)
-        print("  ✅ LLMTimeoutError herencia")
-        
-        err_pr = LLMProviderError("groq/test", "provider down")
-        assert isinstance(err_pr, LLMError)
-        print("  ✅ LLMProviderError herencia")
-        
-        err_np = LLMNoProviderAvailable("all failed")
-        assert "all failed" in str(err_np)
-        print("  ✅ LLMNoProviderAvailable")
-        
-        # Test 2: _get_default_model con Groq key
-        with patch.object(get_settings(), "groq_api_key", "test-key"):
-            with patch.object(get_settings(), "gemini_api_key", ""):
-                model = _get_default_model()
-                assert model == "groq/llama-3.3-70b-versatile"
-                print("  ✅ Default model: Groq")
-        
-        # Test 3: _get_default_model con solo Gemini
-        with patch.object(get_settings(), "groq_api_key", ""):
-            with patch.object(get_settings(), "gemini_api_key", "test-key"):
-                model = _get_default_model()
-                assert model == "gemini/gemini-2.5-pro"
-                print("  ✅ Default model: Gemini fallback")
-        
-        # Test 4: _build_provider_chain Groq → Gemini
-        settings_mock = type("S", (), {"gemini_api_key": "test", "groq_api_key": "test"})()
-        chain = _build_provider_chain("groq/llama-3.3-70b-versatile", settings_mock)
+        assert "fallo" in str(err)
+        assert "[groq/test] fallo" == str(err)
+        print("✅ LLMError base con formato correcto")
+
+        assert isinstance(LLMRateLimitError("m", "r"), LLMError)
+        assert isinstance(LLMTimeoutError("m", "t"), LLMError)
+        assert isinstance(LLMProviderError("m", "p"), LLMError)
+        print("✅ Jerarquía de excepciones correcta")
+
+        err_np = LLMNoProviderAvailable("todos fallaron")
+        assert "todos fallaron" in str(err_np)
+        print("✅ LLMNoProviderAvailable")
+
+        # Test 2: _get_default_model con Groq
+        s_groq = SimpleNamespace(groq_api_key="key", gemini_api_key="")
+        assert _get_default_model(s_groq) == "groq/llama-3.3-70b-versatile"
+        print("✅ Default model: Groq cuando hay GROQ_API_KEY")
+
+        # Test 3: _get_default_model fallback a Gemini
+        s_gemini = SimpleNamespace(groq_api_key="", gemini_api_key="key")
+        assert _get_default_model(s_gemini) == "gemini/gemini-2.5-pro"
+        print("✅ Default model: Gemini cuando solo hay GEMINI_API_KEY")
+
+        # Test 4: Provider chain Groq → Gemini
+        s_both = SimpleNamespace(groq_api_key="key", gemini_api_key="key")
+        chain = _build_provider_chain("groq/llama-3.3-70b-versatile", s_both)
         assert len(chain) == 2
         assert chain[0].startswith("groq/")
         assert chain[1].startswith("gemini/")
-        print("  ✅ Provider chain: Groq → Gemini")
-        
-        # Test 5: _build_provider_chain Gemini → Groq
-        chain2 = _build_provider_chain("gemini/gemini-2.5-pro", settings_mock)
+        print("✅ Provider chain: Groq → Gemini")
+
+        # Test 5: Provider chain Gemini → Groq
+        chain2 = _build_provider_chain("gemini/gemini-2.5-pro", s_both)
         assert len(chain2) == 2
         assert chain2[0].startswith("gemini/")
         assert chain2[1].startswith("groq/")
-        print("  ✅ Provider chain: Gemini → Groq")
-        
-        # Test 6: Chain sin fallback (sin API key alternativa)
-        settings_empty = type("S", (), {"gemini_api_key": "", "groq_api_key": "test"})()
-        chain3 = _build_provider_chain("groq/llama-3.3-70b-versatile", settings_empty)
+        print("✅ Provider chain: Gemini → Groq")
+
+        # Test 6: Provider chain sin fallback (sin API key alternativa)
+        s_only_groq = SimpleNamespace(groq_api_key="key", gemini_api_key="")
+        chain3 = _build_provider_chain("groq/llama-3.3-70b-versatile", s_only_groq)
         assert len(chain3) == 1
-        print("  ✅ Provider chain: solo primary (sin fallback)")
-        
-        print("\n🎉 Todos los smoke tests pasaron")
-    
+        print("✅ Provider chain: solo primary cuando no hay fallback key")
+
+        # Test 7: chat_completion exitoso (mock LiteLLM)
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "Encontré 2 propiedades en Pampatar."
+
+        with patch("src.app.llm.client.acompletion", new_callable=AsyncMock) as mock_ac:
+            mock_ac.return_value = mock_response
+            result = await chat_completion(
+                messages=[{"role": "user", "content": "Busco apartamento"}],
+                model="groq/llama-3.3-70b-versatile",
+            )
+            assert result == "Encontré 2 propiedades en Pampatar."
+            assert mock_ac.called
+        print("✅ chat_completion exitoso con mock")
+
+        # Test 8: response_format=None NO se pasa a LiteLLM
+        call_kwargs_captured = {}
+
+        async def mock_acompletion(**kwargs):
+            call_kwargs_captured.update(kwargs)
+            return mock_response
+
+        with patch("src.app.llm.client.acompletion", side_effect=mock_acompletion):
+            await chat_completion(
+                messages=[{"role": "user", "content": "test"}],
+                model="groq/llama-3.3-70b-versatile",
+                response_format=None,
+            )
+        assert "response_format" not in call_kwargs_captured
+        print("✅ response_format=None no se pasa a LiteLLM")
+
+        # Test 9: response_format no-None SÍ se pasa a LiteLLM
+        call_kwargs_captured.clear()
+        schema = {"type": "json_object"}
+
+        with patch("src.app.llm.client.acompletion", side_effect=mock_acompletion):
+            await chat_completion(
+                messages=[{"role": "user", "content": "test"}],
+                model="groq/llama-3.3-70b-versatile",
+                response_format=schema,
+            )
+        assert call_kwargs_captured.get("response_format") == schema
+        print("✅ response_format no-None se pasa correctamente a LiteLLM")
+
+        # Test 10: LLMNoProviderAvailable cuando todos fallan
+        with patch(
+            "src.app.llm.client.acompletion",
+            side_effect=Exception("provider down"),
+        ):
+            try:
+                await chat_completion(
+                    messages=[{"role": "user", "content": "test"}],
+                    model="groq/llama-3.3-70b-versatile",
+                    retry_count=0,
+                )
+                assert False, "Debería haber lanzado LLMNoProviderAvailable"
+            except LLMNoProviderAvailable:
+                pass
+        print("✅ LLMNoProviderAvailable cuando todos los providers fallan")
+
+        print("\n🎉 Todos los smoke tests pasaron ✅")
+
     asyncio.run(_test())
