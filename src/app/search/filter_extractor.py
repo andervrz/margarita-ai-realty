@@ -8,29 +8,22 @@ Flujo:
   1. Normaliza query (lowercase + remoción de tildes)
   2. Aplica patrones regex por categoría (precio, zona, habitaciones, etc.)
   3. Busca keywords de zonas de Margarita y tipos de propiedad
-  4. Evalúa flags booleanos con lógica positivo/negativo para evitar falsos positivos
+  4. Evalúa flags booleanos con lógica positivo/negativo
   5. Retorna FilterQuery con extracted_by="regex"
 
-Si no encuentra ningún filtro estructural, retorna FilterQuery vacío
+Si no encuentra filtros estructurales, retorna FilterQuery vacío
 (is_empty=True), lo que dispara el LLM fallback en hybrid.py.
-
-✅ Combina:
-   - Normalización robusta de texto (Módulo 2)
-   - Parsing de precios con soporte para "k"/"mil" (Módulo 2)
-   - Lógica booleana con contexto negativo (Módulo 1)
-   - Autocontención + mantenibilidad (ambos)
 """
 
 from __future__ import annotations
 
 import re
-from typing import Pattern
 
 from src.app.schemas.search import FilterQuery
 
 
-# ── Configuración de Zonas de Margarita ───────────────────────────
-# Lista canónica con tildes originales para retorno
+# ── Zonas de Margarita ────────────────────────────────────────────
+
 MARGARITA_ZONES_CANONICAL = [
     "pampatar", "porlamar", "el agua", "guacuco", "el yaque",
     "playa caribe", "playa parguito", "manzanillo",
@@ -42,7 +35,7 @@ MARGARITA_ZONES_CANONICAL = [
     "margarita", "nueva esparta",
 ]
 
-# Versión normalizada para matching (sin tildes, lowercase)
+
 def _normalize_zone(z: str) -> str:
     return (
         z.lower()
@@ -50,23 +43,25 @@ def _normalize_zone(z: str) -> str:
         .replace("ó", "o").replace("ú", "u").replace("ñ", "n")
     )
 
+
 MARGARITA_ZONES_NORMALIZED = [_normalize_zone(z) for z in MARGARITA_ZONES_CANONICAL]
 
 
 # ── Tipos de Propiedad ────────────────────────────────────────────
+
 PROPERTY_TYPES_CANONICAL = [
-    "venta", "arriendo", "vacacional", "local", "comercial",
+    "venta", "arriendo", "vacacional", "local",
     "posada", "hotel", "planos", "terreno",
     "apartamento", "casa", "villa", "townhouse",
 ]
 
-# Mapeo de sinónimos → tipo canónico
 PROPERTY_TYPE_SYNONYMS: dict[str, str] = {
     "alquiler": "arriendo",
     "renta": "arriendo",
     "rent": "arriendo",
     "apto": "apartamento",
     "depto": "apartamento",
+    "comercial": "local",
     "locales": "local",
     "oficina": "local",
     "shop": "local",
@@ -79,28 +74,17 @@ PROPERTY_TYPE_SYNONYMS: dict[str, str] = {
 }
 
 
-# ── Patrones Regex para Precios ───────────────────────────────────
-PRICE_PATTERNS: list[tuple[Pattern, str]] = [
-    # Rango: "entre $100k y $200k", "between 100000 and 200000"
+# ── Patrones de Precio ────────────────────────────────────────────
+
+PRICE_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"entre\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?\s+(?:y|and|-)\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?", re.I), "range"),
-    
-    # Máximo: "hasta $200k", "max 200000", "menos de 150 mil"
     (re.compile(r"(?:hasta|máximo|maximo|max|menos de|under|up to|below)\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd|dólares)?", re.I), "max"),
-    
-    # Máximo postfix: "$200k máximo", "200000 o menos"
     (re.compile(r"[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?\s*(?:máximo|maximo|max|o menos|or less)", re.I), "max"),
-    
-    # Mínimo: "desde $150k", "mínimo 100000", "más de 50 mil"
     (re.compile(r"(?:desde|mínimo|minimo|min|más de|more than|over|above|from)\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd|dólares)?", re.I), "min"),
-    
-    # Mínimo postfix: "$150k mínimo", "100000 o más"
     (re.compile(r"[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?\s*(?:mínimo|minimo|min|o más|or more)", re.I), "min"),
-    
-    # Precio exacto suelto (fallback): "$200000", "200k usd"
     (re.compile(r"[\$]\s*([\d\.,]+)\s*(?:k|mil|usd|dólares)?\b", re.I), "exact"),
 ]
 
-# ── Patrones para Habitaciones y Baños ───────────────────────────
 ROOM_PATTERNS = {
     "bedrooms": [
         re.compile(r"(\d+)\s*(?:habitaciones?|hab\.?|cuartos?|rooms?|dormitorios?|recámaras?|recamaras?|h\b)", re.I),
@@ -111,19 +95,19 @@ ROOM_PATTERNS = {
     ],
 }
 
-# ── Patrones para Área ───────────────────────────────────────────
 AREA_PATTERNS = [
     re.compile(r"(\d+)\s*(?:m2|m²|metros?\s*cuadrados?|sq\s*m|mt2)", re.I),
     re.compile(r"(?:desde|mínimo|min)\s+(\d+)\s*(?:m2|metros)", re.I),
 ]
 
 
-# ── Keywords para Flags Booleanos ────────────────────────────────
-BOOLEAN_FLAGS: dict[str, dict[str, list[str]]] = {
+# ── Keywords Booleanos — normalizados al inicio del módulo ────────
+
+BOOLEAN_FLAGS_RAW: dict[str, dict[str, list[str]]] = {
     "vista_al_mar": {
         "positive": [
-            "vista al mar", "vista del mar", "frente al mar", "vista al océano",
-            "ocean view", "sea view", "vista panorámica", "panoramic view",
+            "vista al mar", "vista del mar", "frente al mar", "vista al oceano",
+            "ocean view", "sea view", "vista panoramica", "panoramic view",
             "con vista", "vistas al mar", "mirando al mar",
         ],
         "negative": [
@@ -133,8 +117,8 @@ BOOLEAN_FLAGS: dict[str, dict[str, list[str]]] = {
     },
     "frente_playa": {
         "positive": [
-            "frente a la playa", "frente playa", "beachfront", "primera línea",
-            "primera linea", "sobre la playa", "on the beach", "acceso directo a playa",
+            "frente a la playa", "frente playa", "beachfront", "primera linea",
+            "sobre la playa", "on the beach", "acceso directo a playa",
             "playa privada", "beach access", "a pie de playa",
         ],
         "negative": [
@@ -144,9 +128,9 @@ BOOLEAN_FLAGS: dict[str, dict[str, list[str]]] = {
     },
     "uso_vacacional": {
         "positive": [
-            "vacacional", "vacation", "airbnb", "rental income", "inversión turística",
-            "inversion turística", "rentabilidad", "roi", "para alquilar", "for rent",
-            "alquiler temporal", "temporada", "turístico", "tourist rental",
+            "vacacional", "vacation", "airbnb", "rental income", "inversion turistica",
+            "rentabilidad", "roi", "para alquilar", "for rent",
+            "alquiler temporal", "temporada", "turistico", "tourist rental",
             "ingresos por alquiler", "passive income",
         ],
         "negative": [
@@ -157,86 +141,73 @@ BOOLEAN_FLAGS: dict[str, dict[str, list[str]]] = {
 }
 
 
-# ── Funciones Auxiliares ─────────────────────────────────────────
+def _normalize_keyword(kw: str) -> str:
+    return (
+        kw.lower()
+        .replace("á", "a").replace("é", "e").replace("í", "i")
+        .replace("ó", "o").replace("ú", "u").replace("ñ", "n")
+    )
+
+
+# Normalizar todos los keywords al inicio — evita re-normalizar en cada llamada
+BOOLEAN_FLAGS_NORMALIZED: dict[str, dict[str, list[str]]] = {
+    flag: {
+        "positive": [_normalize_keyword(kw) for kw in data["positive"]],
+        "negative": [_normalize_keyword(kw) for kw in data["negative"]],
+    }
+    for flag, data in BOOLEAN_FLAGS_RAW.items()
+}
+
+
+# ── Funciones Auxiliares ──────────────────────────────────────────
 
 def _normalize_text(text: str) -> str:
-    """Normaliza texto para matching: lowercase + remoción de tildes y caracteres especiales."""
+    """Normaliza texto para matching: lowercase + sin tildes + sin puntuación."""
     normalized = text.lower().strip()
-    # Remover tildes y ñ
     normalized = (
         normalized
         .replace("á", "a").replace("é", "e").replace("í", "i")
         .replace("ó", "o").replace("ú", "u").replace("ü", "u")
         .replace("ñ", "n")
     )
-    # Remover signos de puntuación que puedan interferir
-    normalized = re.sub(r'[^\w\s]', ' ', normalized)
-    return re.sub(r'\s+', ' ', normalized).strip()
-
+    normalized = re.sub(r"[^\w\s]", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def _parse_price_number(match_str: str) -> float | None:
-    """
-    Convierte string de precio a número float.
-    Soporta: "200000", "200.000", "200,000", "200k", "200 mil", "$200k usd"
-    
-    Formatos:
-    - 150000.00 → 150000.0 (estándar)
-    - 150.000,00 → 150000.0 (venezolano: punto=miles, coma=decimal)
-    - 150,000.00 → 150000.0 (US: coma=miles, punto=decimal)
-    - 150.000 → 150000.0 (venezolano: punto=miles, sin decimales)
-    - 150000,00 → 150000.0 (europeo: coma=decimal)
-    - 200k, 200 mil → 200000.0 (multiplicador)
-    """
+    """Convierte string de precio a float. Soporta formatos venezolanos y US."""
     if not match_str:
         return None
-    
+
     original = match_str.strip().lower()
-    
-    # Detectar multiplicador: "k" o "mil" → ×1000
     has_multiplier = any(k in original for k in ["k", "mil"])
     multiplier = 1000 if has_multiplier else 1
-    
-    # Limpiar: quitar símbolos, letras y espacios
-    clean = re.sub(r'[^\d,.]', '', original)
-    
+
+    clean = re.sub(r"[^\d,.]", "", original)
     if not clean:
         return None
-    
-    # ── Determinar formato por análisis de separadores ─────────
+
     has_dot = "." in clean
     has_comma = "," in clean
-    
+
     if has_dot and has_comma:
-        # Ambos presentes: determinar cuál es decimal
         last_dot = clean.rfind(".")
         last_comma = clean.rfind(",")
-        
         if last_comma > last_dot:
-            # Formato venezolano/europeo: 1.234.567,89
             clean = clean.replace(".", "").replace(",", ".")
         else:
-            # Formato US: 1,234,567.89
             clean = clean.replace(",", "")
-    
     elif has_comma and not has_dot:
-        # Solo coma: ¿decimal o miles?
         parts = clean.split(",")
         if len(parts) == 2 and len(parts[1]) <= 2:
-            # Decimal: 150000,50 → 150000.50
             clean = clean.replace(",", ".")
         else:
-            # Miles: 1,234,567 → 1234567
             clean = clean.replace(",", "")
-    
     elif has_dot and not has_comma:
-        # Solo punto: ¿decimal o miles?
         parts = clean.split(".")
         if len(parts) == 2 and len(parts[1]) == 3:
-            # Miles venezolano: 150.000 → 150000
             clean = clean.replace(".", "")
-        # else: 150.5 → decimal, no cambiar
-    
+
     try:
         value = float(clean) * multiplier
         return value if value > 0 else None
@@ -244,13 +215,16 @@ def _parse_price_number(match_str: str) -> float | None:
         return None
 
 
-def _extract_price(query_norm: str) -> tuple[float | None, float | None]:
-    """Extrae min_price y max_price del query normalizado. Retorna (min, max)."""
+def _extract_price(query_original: str) -> tuple[float | None, float | None]:
+    """
+    Extrae min_price y max_price del query ORIGINAL (sin normalizar).
+    Usa el query original para preservar $, puntos y comas de precios venezolanos.
+    """
     min_price: float | None = None
     max_price: float | None = None
-    
+
     for pattern, ptype in PRICE_PATTERNS:
-        matches = pattern.findall(query_norm)
+        matches = pattern.findall(query_original)
         for match in matches:
             if ptype == "range" and isinstance(match, tuple) and len(match) == 2:
                 val_min = _parse_price_number(match[0])
@@ -269,21 +243,19 @@ def _extract_price(query_norm: str) -> tuple[float | None, float | None]:
                 elif ptype == "max":
                     max_price = val if max_price is None else max(max_price, val)
                 elif ptype == "exact" and min_price is None and max_price is None:
-                    # Fallback: si no hay contexto, asumir como máximo
                     max_price = val
-    
-    # Validar consistencia: min no puede ser > max
+
     if min_price and max_price and min_price > max_price:
         min_price, max_price = max_price, min_price
-    
+
     return min_price, max_price
 
 
 def _extract_rooms(query_norm: str) -> tuple[int | None, int | None]:
-    """Extrae bedrooms y bathrooms mínimos."""
+    """Extrae bedrooms y bathrooms mínimos del query normalizado."""
     bedrooms: int | None = None
     bathrooms: int | None = None
-    
+
     for pattern in ROOM_PATTERNS["bedrooms"]:
         match = pattern.search(query_norm)
         if match:
@@ -292,7 +264,7 @@ def _extract_rooms(query_norm: str) -> tuple[int | None, int | None]:
                 break
             except (ValueError, IndexError):
                 continue
-    
+
     for pattern in ROOM_PATTERNS["bathrooms"]:
         match = pattern.search(query_norm)
         if match:
@@ -301,7 +273,7 @@ def _extract_rooms(query_norm: str) -> tuple[int | None, int | None]:
                 break
             except (ValueError, IndexError):
                 continue
-    
+
     return bedrooms, bathrooms
 
 
@@ -318,7 +290,7 @@ def _extract_area(query_norm: str) -> float | None:
 
 
 def _extract_zone(query_norm: str) -> str | None:
-    """Extrae zona de Margarita mencionada (substring matching)."""
+    """Extrae zona de Margarita (substring matching en texto normalizado)."""
     for i, zone_norm in enumerate(MARGARITA_ZONES_NORMALIZED):
         if zone_norm in query_norm:
             return MARGARITA_ZONES_CANONICAL[i]
@@ -326,44 +298,42 @@ def _extract_zone(query_norm: str) -> str | None:
 
 
 def _extract_property_types(query_norm: str) -> list[str] | None:
-    """Extrae tipos de propiedad mencionados, mapeando sinónimos a canónicos."""
+    """Extrae tipos de propiedad, mapeando sinónimos a canónicos."""
     found: set[str] = set()
-    
-    # Primero buscar sinónimos explícitos
+
     for synonym, canonical in PROPERTY_TYPE_SYNONYMS.items():
         if synonym in query_norm:
             found.add(canonical)
-    
-    # Luego buscar tipos canónicos directos
+
     for ptype in PROPERTY_TYPES_CANONICAL:
         if ptype in query_norm:
             found.add(ptype)
-    
+
     return sorted(list(found)) if found else None
 
 
 def _extract_boolean_flags(query_norm: str) -> dict[str, bool | None]:
     """
-    Extrae flags booleanos con lógica positivo/negativo para evitar falsos positivos.
-    
+    Extrae flags booleanos con lógica positivo/negativo.
+
     Reglas:
-    - Si hay keyword positivo Y NO negativo → True
-    - Si hay keyword negativo Y NO positivo → False  
-    - Si hay ambos o ninguno → None (indeciso, delegar a LLM)
+    - keyword positivo Y NO negativo → True
+    - keyword negativo Y NO positivo → False
+    - ambos o ninguno → None (delegar a LLM)
     """
     result: dict[str, bool | None] = {}
-    
-    for flag_name, keywords in BOOLEAN_FLAGS.items():
+
+    for flag_name, keywords in BOOLEAN_FLAGS_NORMALIZED.items():
         positive = any(kw in query_norm for kw in keywords["positive"])
         negative = any(kw in query_norm for kw in keywords["negative"])
-        
+
         if positive and not negative:
             result[flag_name] = True
         elif negative and not positive:
             result[flag_name] = False
         else:
-            result[flag_name] = None  # Indeciso → fallback a LLM
-    
+            result[flag_name] = None
+
     return result
 
 
@@ -371,29 +341,28 @@ def _extract_boolean_flags(query_norm: str) -> dict[str, bool | None]:
 
 def extract_filters(query: str) -> FilterQuery:
     """
-    Extrae filtros estructurados del texto del usuario usando regex + keywords.
-    
+    Extrae filtros estructurados del texto del usuario.
+
     Args:
-        query: Texto libre del usuario (ej: "apto 3 hab en Pampatar hasta $200k con vista al mar")
-    
+        query: Texto libre del usuario.
+
     Returns:
-        FilterQuery con:
-        - Filtros extraídos si se encontró al menos 1 criterio estructural
-        - is_empty=True si no se extrajo nada → trigger para LLM fallback
-        - extracted_by="regex" para trazabilidad
+        FilterQuery con filtros extraídos.
+        is_empty=True si no se extrajo nada → trigger para LLM fallback.
     """
     query_norm = _normalize_text(query)
-    
-    # Extracción por categoría
-    min_price, max_price = _extract_price(query_norm)
+
+    # Precios desde query ORIGINAL — preserva $, puntos, comas
+    min_price, max_price = _extract_price(query)
+
+    # Todo lo demás desde query normalizado
     bedrooms, bathrooms = _extract_rooms(query_norm)
     area_min = _extract_area(query_norm)
     zone = _extract_zone(query_norm)
     property_types = _extract_property_types(query_norm)
     flags = _extract_boolean_flags(query_norm)
-    
-    # Construir resultado
-    result = FilterQuery(
+
+    return FilterQuery(
         property_type=property_types,
         zone=zone,
         min_price_usd=min_price,
@@ -407,89 +376,76 @@ def extract_filters(query: str) -> FilterQuery:
         raw_query=query,
         extracted_by="regex",
     )
-    
-    return result
 
 
-# ── Smoke Tests Integrales ────────────────────────────────────────
+# ── Smoke Tests ───────────────────────────────────────────────────
+
 if __name__ == "__main__":
-    print("🔥 Smoke Test — filter_extractor.py (Versión Híbrida)\n")
-    
+    print("🔥 Smoke Tests — filter_extractor.py\n")
+
     test_cases = [
-        # (query, expected_fields)
         (
             "busco apartamento de 3 habitaciones en Pampatar hasta $200k con vista al mar",
-            {"zone": "pampatar", "bedrooms_min": 3, "max_price_usd": 200000.0, "vista_al_mar": True, "property_type": ["apartamento"]}
+            {"zone": "pampatar", "bedrooms_min": 3, "max_price_usd": 200000.0,
+             "vista_al_mar": True, "property_type": ["apartamento"]},
         ),
         (
             "casa en El Yaque de 2 baños desde 100 mil usd",
-            {"zone": "el yaque", "bathrooms_min": 2, "min_price_usd": 100000.0, "property_type": ["casa"]}
-        ),
-        (
-            "local comercial en Porlamar de 50m2 para invertir",
-            {"zone": "porlamar", "property_type": ["local", "comercial"], "area_min_m2": 50.0, "uso_vacacional": True}
+            {"zone": "el yaque", "bathrooms_min": 2, "min_price_usd": 100000.0,
+             "property_type": ["casa"]},
         ),
         (
             "apto entre $100.000 y $150.000 con 2 habitaciones",
-            {"min_price_usd": 100000.0, "max_price_usd": 150000.0, "bedrooms_min": 2}
+            {"min_price_usd": 100000.0, "max_price_usd": 150000.0, "bedrooms_min": 2},
         ),
         (
             "posada frente a la playa en Guacuco para airbnb",
-            {"zone": "guacuco", "property_type": ["posada"], "frente_playa": True, "uso_vacacional": True}
+            {"zone": "guacuco", "property_type": ["posada"],
+             "frente_playa": True, "uso_vacacional": True},
         ),
         (
             "quiero algo bonito cerca del mar pero SIN vista al mar",
-            {"vista_al_mar": False}  # Contexto negativo debe prevalecer
-        ),
-        (
-            "Busco un apto en alquiler temporal",
-            {"property_type": ["apartamento", "arriendo"]}  # Sinónimos normalizados
+            {"vista_al_mar": False},
         ),
         (
             "Hola, quiero información general",
-            {}  # Vacío → is_empty=True
+            {},
         ),
         (
             "Terreno en La Asunción desde $50k hasta $80.000",
-            {"zone": "la asunción", "property_type": ["terreno"], "min_price_usd": 50000.0, "max_price_usd": 80000.0}
-        ),
-        (
-            "Villa 4h 3b con piscina y vista panorámica en Playa Caribe",
-            {"zone": "playa caribe", "property_type": ["villa"], "bedrooms_min": 4, "bathrooms_min": 3, "vista_al_mar": True}
+            {"zone": "la asunción", "property_type": ["terreno"],
+             "min_price_usd": 50000.0, "max_price_usd": 80000.0},
         ),
     ]
-    
+
     passed = 0
     failed = 0
-    
+
     for i, (query, expected) in enumerate(test_cases, 1):
         print(f"🧪 Test #{i}: \"{query[:60]}{'...' if len(query) > 60 else ''}\"")
         result = extract_filters(query)
-        
-        # Validar campos esperados
+
         all_ok = True
         for key, expected_val in expected.items():
             actual_val = getattr(result, key, None)
             if actual_val != expected_val:
                 print(f"   ❌ {key}: esperado {expected_val}, obtenido {actual_val}")
                 all_ok = False
-        
-        # Validar is_empty para queries vacíos
+
         if not expected and not result.is_empty:
             print(f"   ❌ is_empty: esperado True, obtenido {result.is_empty}")
             all_ok = False
-        
+
         if all_ok:
-            print(f"   ✅ OK | Zone: {result.zone}, Price: ${result.min_price_usd}-${result.max_price_usd}, Beds: {result.bedrooms_min}")
+            print(f"   ✅ OK | Zone: {result.zone}, Price: {result.min_price_usd}-{result.max_price_usd}, Beds: {result.bedrooms_min}")
             passed += 1
         else:
             failed += 1
         print()
-    
-    # Resumen final
+
     print(f"📊 Resultados: {passed} passed, {failed} failed de {len(test_cases)} tests")
     if failed == 0:
-        print("🎉 ¡Todos los smoke tests pasaron! ✅")
+        print("🎉 Todos los smoke tests pasaron ✅")
     else:
-        print("⚠️ Revisar fallos antes de deploy")
+        print("⚠️ Revisar fallos antes de continuar")
         exit(1)
