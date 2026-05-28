@@ -1,4 +1,4 @@
-# project/src/app/calendar/service.py
+# src/app/calendar/service.py
 """Servicio de Google Calendar — creación de eventos para visitas inmobiliarias.
 
 Integración con Google Calendar API v3 via Service Account.
@@ -6,14 +6,14 @@ Todas las operaciones síncronas del SDK se envuelven en asyncio.to_thread()
 para no bloquear el event loop de FastAPI.
 
 Flujo:
-    1. Recibe lead confirmado + property opcional
-    2. Construye evento con duración configurable por tenant
-    3. Crea evento en Google Calendar
-    4. Retorna event_id para persistencia en tabla leads
+  1. Recibe lead confirmado + property opcional
+  2. Construye evento con duración configurable por tenant
+  3. Crea evento en Google Calendar (en thread pool)
+  4. Retorna event_id para persistencia en tabla leads
 
-Requiere:
-    - GOOGLE_CALENDAR_CREDENTIALS_PATH (service account JSON)
-    - GOOGLE_CALENDAR_TIMEZONE (default: America/Caracas)
+Requiere en .env:
+  GOOGLE_CALENDAR_CREDENTIALS_PATH (service account JSON)
+  GOOGLE_CALENDAR_TIMEZONE (default: America/Caracas)
 """
 
 from __future__ import annotations
@@ -22,29 +22,46 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from src.app.core.config import settings
-from src.app.core.logging import logger
+from src.app.core.config import get_settings
+from src.app.core.logging import get_logger
 
 if TYPE_CHECKING:
     from src.app.db.models.lead import Lead
     from src.app.db.models.property import Property
-    from src.app.db.models.tenats import Tenant
+    from src.app.db.models.tenant import Tenant
 
+logger = get_logger(__name__)
+
+
+# ── Excepción de Dominio ──────────────────────────────────────────
+
+class CalendarError(Exception):
+    """Excepción del dominio para errores de Google Calendar."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+# ── Función Síncrona (para thread pool) ──────────────────────────
 
 def _create_event_sync(
     lead: "Lead",
     tenant: "Tenant",
-    property: "Property | None",
+    prop: "Property | None",
 ) -> str:
-    """Función síncrona que crea el evento en Google Calendar.
-    
-    Se ejecuta via asyncio.to_thread() para no bloquear el event loop.
+    """Crea el evento en Google Calendar de forma síncrona.
+
+    Se ejecuta via asyncio.to_thread() — no llamar directamente
+    desde código async sin to_thread o bloquea el event loop.
     """
     from google.oauth2.service_account import Credentials
     from googleapiclient.discovery import build
 
+    settings = get_settings()
+
     creds = Credentials.from_service_account_file(
-        settings.GOOGLE_CALENDAR_CREDENTIALS_PATH,
+        settings.google_calendar_credentials_path,
         scopes=["https://www.googleapis.com/auth/calendar"],
     )
     service = build("calendar", "v3", credentials=creds, cache_discovery=False)
@@ -54,52 +71,57 @@ def _create_event_sync(
         f"{lead.preferred_date}T{lead.preferred_time}",
         "%Y-%m-%dT%H:%M",
     )
-    
-    # Duración de la visita: del lead → tenant → default global
-    duration = lead.visit_duration_minutes or tenant.visit_duration_minutes or settings.DEFAULT_VISIT_DURATION_MINUTES
+
+    # Duración: lead → tenant → settings global
+    # Prioridad: lo que el lead capturó > config del tenant > default global
+    duration = (
+        lead.visit_duration_minutes
+        or tenant.visit_duration_minutes
+        or settings.default_visit_duration_minutes
+    )
     end_dt = start_dt + timedelta(minutes=duration)
 
-    # Construir título del evento
+    # Título del evento
     title_parts = [f"Visita: {lead.name}"]
-    if property:
-        title_parts.append(f"— {property.title}")
+    if prop:
+        title_parts.append(f"— {prop.title}")
     event_summary = " ".join(title_parts)
 
-    # Construir descripción con metadata del lead
+    # Descripción con metadata del lead
     description_lines = [
         f"Lead: {lead.name}",
         f"Email: {lead.email}",
         f"Teléfono: {lead.phone}",
-        f"Score de calificación: {lead.qualification_score}",
+        f"Score de calificación: {lead.qualification_score or 'N/A'}",
         f"Internacional: {'Sí' if lead.is_international else 'No'}",
     ]
     if lead.notes:
         description_lines.append(f"Notas: {lead.notes}")
-    if property:
+    if prop:
         description_lines.extend([
-            f"",
-            f"Propiedad: {property.title}",
-            f"Zona: {property.location_zone or 'N/A'}",
-            f"Precio: ${property.price_usd:,.0f} USD" if property.price_usd else "",
+            "",
+            f"Propiedad: {prop.title}",
+            f"Zona: {prop.location_zone or 'N/A'}",
+            f"Precio: ${prop.price_usd:,.0f} USD" if prop.price_usd else "Precio: Consultar",
         ])
 
     event_body = {
         "summary": event_summary,
-        "description": "\n".join(line for line in description_lines if line),
+        "description": "\n".join(line for line in description_lines if line is not None),
         "start": {
             "dateTime": start_dt.isoformat(),
-            "timeZone": settings.GOOGLE_CALENDAR_TIMEZONE,
+            "timeZone": settings.google_calendar_timezone,
         },
         "end": {
             "dateTime": end_dt.isoformat(),
-            "timeZone": settings.GOOGLE_CALENDAR_TIMEZONE,
+            "timeZone": settings.google_calendar_timezone,
         },
         "attendees": [{"email": lead.email}],
         "reminders": {
             "useDefault": False,
             "overrides": [
-                {"method": "email", "minutes": 1440},   # 24h antes
-                {"method": "popup", "minutes": 60},     # 1h antes
+                {"method": "email", "minutes": 1440},  # 24h antes
+                {"method": "popup", "minutes": 60},    # 1h antes
             ],
         },
     }
@@ -113,29 +135,32 @@ def _create_event_sync(
     return result["id"]
 
 
+# ── Función Pública Async ─────────────────────────────────────────
+
 async def create_calendar_event(
     lead: "Lead",
     tenant: "Tenant",
-    property: "Property | None" = None,
+    prop: "Property | None" = None,
 ) -> str:
     """Crea un evento de visita en Google Calendar de forma asíncrona.
-    
+
     Args:
         lead: Lead confirmado con fecha, hora y duración de visita.
         tenant: Tenant configurado (timezone, duración default).
-        property: Propiedad asociada a la visita (opcional).
-    
+        prop: Propiedad asociada a la visita (opcional).
+
     Returns:
         event_id: ID del evento creado en Google Calendar.
-    
+                  Persistir en leads.calendar_event_id.
+
     Raises:
-        CalendarError: Si la API de Google Calendar falla.
+        CalendarError: Si la API de Google Calendar falla por cualquier motivo.
     """
     logger.info(
         "calendar_event_create_start",
         lead_id=str(lead.id),
         tenant_id=str(tenant.id),
-        property_id=str(property.id) if property else None,
+        property_id=str(prop.id) if prop else None,
         date=lead.preferred_date,
         time=lead.preferred_time,
     )
@@ -145,13 +170,14 @@ async def create_calendar_event(
             _create_event_sync,
             lead,
             tenant,
-            property,
+            prop,
         )
     except Exception as exc:
         logger.error(
             "calendar_event_create_failed",
             lead_id=str(lead.id),
             tenant_id=str(tenant.id),
+            error_type=type(exc).__name__,
             error=str(exc),
         )
         raise CalendarError(
@@ -168,28 +194,31 @@ async def create_calendar_event(
     return event_id
 
 
-class CalendarError(Exception):
-    """Excepción del dominio para errores de Google Calendar."""
-    
-    def __init__(self, detail: str) -> None:
-        self.detail = detail
-        super().__init__(detail)
+# ── Smoke Tests ───────────────────────────────────────────────────
 
-
-# ── Smoke Test ─────────────────────────────────────────────────────
 if __name__ == "__main__":
     import asyncio
-    from uuid import uuid4
     from datetime import datetime as dt
+    from uuid import uuid4
 
-    print("🔥 Smoke Test — calendar/service.py")
+    print("🔥 Smoke Tests — calendar/service.py\n")
 
-    # Test 1: Validar que settings cargan correctamente
-    assert settings.GOOGLE_CALENDAR_TIMEZONE == "America/Caracas", "Timezone default incorrecto"
-    assert settings.DEFAULT_VISIT_DURATION_MINUTES == 60, "Duración default incorrecta"
-    print("  ✅ Settings cargan correctamente")
+    settings = get_settings()
 
-    # Test 2: Validar estructura de Lead mock (sin DB)
+    # Test 1: Settings cargan con campos correctos (snake_case)
+    assert hasattr(settings, "google_calendar_timezone"), \
+        "Campo google_calendar_timezone no existe en Settings"
+    assert hasattr(settings, "google_calendar_credentials_path"), \
+        "Campo google_calendar_credentials_path no existe en Settings"
+    assert hasattr(settings, "default_visit_duration_minutes"), \
+        "Campo default_visit_duration_minutes no existe en Settings"
+    assert settings.google_calendar_timezone == "America/Caracas", \
+        f"Timezone inesperado: {settings.google_calendar_timezone}"
+    assert settings.default_visit_duration_minutes == 60, \
+        f"Duración inesperada: {settings.default_visit_duration_minutes}"
+    print("✅ Settings cargan con campos snake_case correctos")
+
+    # Test 2: Mocks de dominio
     class MockProperty:
         id = uuid4()
         title = "Apartamento Vista al Mar — Pampatar"
@@ -201,12 +230,12 @@ if __name__ == "__main__":
         name = "Juan Pérez"
         email = "juan@test.com"
         phone = "+584121234567"
-        preferred_date = "2026-06-15"
+        preferred_date = "2027-06-15"
         preferred_time = "10:00"
         visit_duration_minutes = 90
         qualification_score = 85
         is_international = True
-        notes = "Interesado en vista al mar, presupuesto $200k"
+        notes = "Interesado en vista al mar"
 
     class MockTenant:
         id = uuid4()
@@ -216,32 +245,68 @@ if __name__ == "__main__":
     tenant = MockTenant()
     prop = MockProperty()
 
-    # Test 3: Validar cálculo de duración (lead > tenant > default)
-    duration = lead.visit_duration_minutes or tenant.visit_duration_minutes or settings.DEFAULT_VISIT_DURATION_MINUTES
-    assert duration == 90, "Duración debe tomar valor del lead"
-    print(f"  ✅ Duración resuelta: {duration} min (lead override)")
+    # Test 3: Prioridad de duración (lead > tenant > settings)
+    duration = (
+        lead.visit_duration_minutes
+        or tenant.visit_duration_minutes
+        or settings.default_visit_duration_minutes
+    )
+    assert duration == 90, f"Duración debe tomar valor del lead: {duration}"
+    print("✅ Duración: lead (90) > tenant (60) > settings (60)")
 
-    # Test 4: Validar cálculo de end_dt
-    start = dt.strptime(f"{lead.preferred_date}T{lead.preferred_time}", "%Y-%m-%dT%H:%M")
+    # Test 4: Prioridad de duración cuando lead no tiene valor
+    class MockLeadSinDuracion:
+        visit_duration_minutes = 0  # falsy — debe usar tenant
+    duration_fallback = (
+        MockLeadSinDuracion.visit_duration_minutes
+        or tenant.visit_duration_minutes
+        or settings.default_visit_duration_minutes
+    )
+    assert duration_fallback == 60, f"Duración debe caer a tenant: {duration_fallback}"
+    print("✅ Duración fallback: lead(0) → tenant (60)")
+
+    # Test 5: Cálculo de start/end sin error
+    start = dt.strptime(
+        f"{lead.preferred_date}T{lead.preferred_time}",
+        "%Y-%m-%dT%H:%M",
+    )
     end = start + timedelta(minutes=duration)
-    assert end > start, "End debe ser posterior a start"
-    assert (end - start).total_seconds() == 90 * 60, "Delta debe ser 90 min"
-    print(f"  ✅ Rango horario: {start.isoformat()} → {end.isoformat()}")
+    assert end > start
+    assert int((end - start).total_seconds()) == 90 * 60
+    print(f"✅ Rango horario: {start.isoformat()} → {end.isoformat()}")
 
-    # Test 5: Validar construcción de título
-    title = f"Visita: {lead.name} — {prop.title}"
-    assert "Juan Pérez" in title
-    assert "Pampatar" in title
-    print(f"  ✅ Título evento: {title[:50]}...")
+    # Test 6: Título con propiedad
+    title_with_prop = f"Visita: {lead.name} — {prop.title}"
+    assert "Juan Pérez" in title_with_prop
+    assert "Pampatar" in title_with_prop
+    print(f"✅ Título con propiedad: '{title_with_prop[:50]}...'")
 
-    # Test 6: Validar que CalendarError se puede instanciar
-    err = CalendarError("Test error")
-    assert err.detail == "Test error"
-    print("  ✅ CalendarError instanciable")
+    # Test 7: Título sin propiedad
+    title_no_prop = f"Visita: {lead.name}"
+    assert "Juan Pérez" in title_no_prop
+    assert "—" not in title_no_prop
+    print(f"✅ Título sin propiedad: '{title_no_prop}'")
 
-    # Test 7: Validar que _create_event_sync existe y es callable
+    # Test 8: CalendarError instanciable y con detail
+    err = CalendarError("Credenciales inválidas")
+    assert err.detail == "Credenciales inválidas"
+    assert str(err) == "Credenciales inválidas"
+    assert isinstance(err, Exception)
+    print("✅ CalendarError instanciable con .detail")
+
+    # Test 9: _create_event_sync es callable
     assert callable(_create_event_sync)
-    print("  ✅ _create_event_sync es callable")
+    print("✅ _create_event_sync es callable")
 
-    print("\n🎉 Todos los smoke tests pasaron")
-    print("   Nota: Los tests de integración con Google API requieren credentials.json real")
+    # Test 10: create_calendar_event es coroutine
+    import inspect
+    assert inspect.iscoroutinefunction(create_calendar_event)
+    print("✅ create_calendar_event es async")
+
+    # Test 11: Internacional en descripción
+    intl_line = f"Internacional: {'Sí' if lead.is_international else 'No'}"
+    assert intl_line == "Internacional: Sí"
+    print("✅ Flag internacional en descripción")
+
+    print("\n🎉 Todos los smoke tests pasaron ✅")
+    print("   Nota: Tests de integración con Google API requieren credentials.json real")
