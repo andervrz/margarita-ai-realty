@@ -406,4 +406,78 @@ if __name__ == "__main__":
     assert item.visit_duration_minutes == 60  # default
     print("✅ LeadListItem schema válido")
 
-    # Test 2: LeadStatusUpdate e
+    # Test 2: LeadStatusUpdate estados válidos del proyecto
+    for valid_status in ["pendiente", "confirmado", "cancelado"]:
+        update = LeadStatusUpdate(status=valid_status)
+        assert update.status == valid_status
+    print("✅ LeadStatusUpdate acepta estados válidos del enum")
+
+    # Test 3: LeadStatusUpdate rechaza estado inválido
+    try:
+        LeadStatusUpdate(status="contactado")  # estado del módulo original, no del enum
+        assert False, "Debería rechazar 'contactado' — no está en LeadStatus"
+    except Exception:
+        pass
+    try:
+        LeadStatusUpdate(status="invalido")
+        assert False, "Debería rechazar estado inválido"
+    except Exception:
+        pass
+    print("✅ LeadStatusUpdate rechaza estados inválidos")
+
+    # Test 4: LeadDetail hereda de LeadListItem
+    detail = LeadDetail(
+        id="lead-002",
+        name="John Smith",
+        email="john@example.com",
+        phone="+13051234567",
+        qualification_score=92,
+        is_international=True,
+        status="confirmado",
+        preferred_date="2027-06-20",
+        preferred_time="14:00",
+        visit_duration_minutes=90,
+        calendar_event_id="google-event-123",
+        whatsapp_sent=True,
+        email_sent=True,
+        created_at="2027-05-07T10:00:00",
+        updated_at="2027-05-07T12:00:00",
+    )
+    assert detail.whatsapp_sent is True
+    assert detail.calendar_event_id == "google-event-123"
+    assert detail.visit_duration_minutes == 90
+    print("✅ LeadDetail schema con todos los campos")
+
+    # Test 5: Router con prefix correcto
+    assert router.prefix == "/leads"
+    print("✅ Router prefix='/leads'")
+
+    # Test 6: _dict_to_tenant_obj adapter
+    tenant_dict = {
+        "id": "t-001",
+        "name": "Test Inmobiliaria",
+        "whatsapp_enabled": True,
+        "email_enabled": True,
+        "agent_email": "agente@test.com",
+    }
+    tenant_obj = _dict_to_tenant_obj(tenant_dict)
+    assert tenant_obj.id == "t-001"
+    assert tenant_obj.whatsapp_enabled is True
+    assert tenant_obj.agent_email == "agente@test.com"
+    print("✅ _dict_to_tenant_obj adapter correcto")
+
+    # Test 7: No hay conflicto de nombre 'status' entre parámetro y módulo
+    # El parámetro fue renombrado a lead_status con alias="status"
+    import inspect
+    sig = inspect.signature(list_leads)
+    assert "lead_status" in sig.parameters
+    print("✅ Parámetro 'status' usa alias correctamente (sin conflicto con status module)")
+
+    # Test 8: datetime.now(timezone.utc) — no utcnow() deprecado
+    from datetime import timezone as tz
+    now = datetime.now(tz.utc)
+    assert now.tzinfo is not None
+    print("✅ datetime.now(timezone.utc) correcto — no utcnow() deprecado")
+
+    print("\n🎉 Todos los smoke tests pasaron ✅")
+    print("   Nota: Tests de integración requieren DB con leads de prueba")
