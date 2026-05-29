@@ -15,7 +15,7 @@ ENV SENTENCE_TRANSFORMERS_HOME=/home/user/.cache/st
 ENV HF_HOME=/home/user/.cache/hf
 ENV TOKENIZERS_PARALLELISM=false
 
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
+RUN uv run python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
 
 COPY --chown=user . /app
 ENV DATABASE_URL=sqlite+aiosqlite:////tmp/chatbot.db
