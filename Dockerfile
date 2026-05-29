@@ -8,7 +8,7 @@ USER user
 ENV PATH="/home/user/.local/bin:$PATH"
 WORKDIR /app
 
-COPY --chown=user pyproject.toml uv.lock ./
+COPY --chown=user pyproject.toml uv.lock README.md ./
 RUN pip install --no-cache-dir uv && uv sync --frozen --no-dev
 
 ENV SENTENCE_TRANSFORMERS_HOME=/home/user/.cache/st
