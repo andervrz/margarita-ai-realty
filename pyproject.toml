@@ -4,7 +4,7 @@ name        = "margarita-ai-realty"
 version     = "1.2.0"
 description = "AI chatbot para inmobiliarias en Isla de Margarita, Venezuela"
 readme      = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 
 dependencies = [
     # ── FastAPI Stack ─────────────────────────────────────────────
