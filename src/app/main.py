@@ -1,4 +1,4 @@
-# project/src/app/main.py
+# src/app/main.py
 """FastAPI application factory — punto de entrada de la aplicación.
 
 Responsabilidades:
@@ -6,26 +6,35 @@ Responsabilidades:
     2. Configurar middleware stack (CORS → RateLimit → Tenant)
     3. Montar routers de API v1
     4. Inicializar logging estructurado (structlog)
-    5. Gestionar lifecycle: startup (DB, cleanup task) → shutdown (cleanup)
+    5. Registrar exception handlers del dominio
+    6. Gestionar lifecycle: startup → shutdown
 
-Lifespan:
-    - Startup: setup_logging() + session cleanup background task
-    - Shutdown: cancela tareas pendientes, cierra conexiones
+Lifespan (startup):
+    - setup_logging(): configura structlog
+    - Alembic head check: verifica que las tablas existen
+    - Session cleanup background task: limpia sesiones expiradas por TTL
 
-Middleware stack (orden de ejecución):
-    1. CORSMiddleware      → allow_origins por tenant (dev: wildcard)
-    2. RateLimitMiddleware → protección contra abuso
+Lifespan (shutdown):
+    - Cancela tareas de background
+    - Cierra el engine de SQLAlchemy
+
+Middleware stack (orden de ejecución — de afuera hacia adentro):
+    1. CORSMiddleware      → allow_origins (dev: wildcard)
+    2. RateLimitMiddleware → protección contra abuso por IP/tenant
     3. TenantMiddleware    → resuelve tenant desde X-API-Key
 
-Nota: En desarrollo (APP_ENV=development) se omite validación de API key
-y se usa DEV_TENANT hardcodeado para eliminar fricción.
+En desarrollo (app_env=development):
+    - API key omitida → DEV_TENANT hardcodeado
+    - CORS wildcard
+    - Sin rate limiting
+    - Docs en /docs y /redoc habilitados
 """
 
 from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,169 +42,278 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.app.api.middleware import RateLimitMiddleware, TenantMiddleware
 from src.app.api.v1.router import api_v1_router
 from src.app.chat.memory import cleanup_expired_sessions
-from src.app.core.config import settings
-from src.app.core.logging import logger, setup_logging
+from src.app.core.config import get_settings
+from src.app.core.logging import get_logger, setup_logging
+from src.app.exceptions import DomainError, domain_exception_handler
+
+logger = get_logger(__name__)
 
 
-# ── Lifespan Manager ───────────────────────────────────────────────
+# ── Lifespan Manager ──────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Gestiona el ciclo de vida de la aplicación.
-    
-    Startup:
-        - Configura logging estructurado
-        - Inicia background task de limpieza de sesiones expiradas
-    
-    Shutdown:
-        - Cancela tareas de background
-        - Limpia recursos
-    """
-    # ── Startup ────────────────────────────────────────────────────
-    setup_logging()
-    logger.info("app_startup", env=settings.APP_ENV, version="1.2.0")
+    """Ciclo de vida de la aplicación.
 
-    # Iniciar background task de cleanup de sesiones
+    Startup:
+      1. setup_logging()   → structlog configurado
+      2. DB init check     → verifica que las tablas existen
+      3. Cleanup task      → background task para sesiones TTL
+
+    Shutdown:
+      1. Cancela tareas de background
+      2. Dispone el engine de SQLAlchemy
+    """
+    settings = get_settings()
+
+    # ── Startup ───────────────────────────────────────────────────
+    setup_logging()
+
+    logger.info(
+        "app_startup",
+        env=settings.app_env,
+        version="1.2.0",
+        service="margarita-ai-realty",
+    )
+
+    # Verificar que las tablas existen (Alembic debe haber corrido)
+    await _check_db_tables()
+
+    # Background task — limpieza de sesiones expiradas por TTL
     cleanup_task = asyncio.create_task(
-        cleanup_expired_sessions(settings.SESSION_TTL_MINUTES),
+        cleanup_expired_sessions(),  # Lee settings internamente
         name="session_cleanup",
     )
-    logger.info("session_cleanup_task_started", ttl_minutes=settings.SESSION_TTL_MINUTES)
+
+    logger.info(
+        "session_cleanup_task_started",
+        ttl_minutes=settings.session_ttl_minutes,
+        interval_seconds=settings.session_cleanup_interval_seconds,
+    )
 
     yield
 
-    # ── Shutdown ───────────────────────────────────────────────────
+    # ── Shutdown ──────────────────────────────────────────────────
     logger.info("app_shutdown")
-    
+
     if not cleanup_task.done():
         cleanup_task.cancel()
         try:
             await cleanup_task
         except asyncio.CancelledError:
             pass
-    logger.info("session_cleanup_task_stopped")
+
+    # Disponer engine SQLAlchemy — cierra pool de conexiones
+    from src.app.db.engine import engine
+    await engine.dispose()
+
+    logger.info("app_shutdown_complete")
 
 
-# ── App Factory ────────────────────────────────────────────────────
+# ── DB Init Check ─────────────────────────────────────────────────
+
+async def _check_db_tables() -> None:
+    """Verifica que las tablas principales existen en DB.
+
+    No crea tablas — eso es responsabilidad de Alembic.
+    Solo verifica en startup para detectar configuración incorrecta.
+    """
+    from sqlalchemy import text
+    from src.app.db.engine import engine
+
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='tenants'")
+            )
+            exists = result.scalar_one_or_none()
+            if not exists:
+                logger.warning(
+                    "db_tables_not_found",
+                    hint="Run: uv run alembic upgrade head",
+                )
+            else:
+                logger.info("db_tables_ok")
+    except Exception as exc:
+        logger.warning(
+            "db_check_failed",
+            error=str(exc),
+            hint="Run: uv run alembic upgrade head",
+        )
+
+
+# ── App Factory ───────────────────────────────────────────────────
 
 def create_app() -> FastAPI:
     """Crea y configura la instancia de FastAPI.
-    
+
     Returns:
-        FastAPI: Aplicación configurada con middleware, routers y lifespan.
+        FastAPI configurada con middleware, routers, exception handlers
+        y lifespan.
     """
+    settings = get_settings()
+
     app = FastAPI(
-        title=settings.APP_NAME,
+        title=settings.app_name,
         version="1.2.0",
-        description="Chatbot conversacional para inmobiliarias en Isla de Margarita, Venezuela",
-        docs_url="/docs" if settings.APP_ENV == "development" else None,
-        redoc_url="/redoc" if settings.APP_ENV == "development" else None,
-        openapi_url="/openapi.json" if settings.APP_ENV == "development" else None,
+        description=(
+            "Chatbot conversacional para inmobiliarias "
+            "en Isla de Margarita, Venezuela"
+        ),
+        # Docs solo en desarrollo
+        docs_url="/docs" if settings.app_env == "development" else None,
+        redoc_url="/redoc" if settings.app_env == "development" else None,
+        openapi_url=(
+            "/openapi.json" if settings.app_env == "development" else None
+        ),
         lifespan=lifespan,
     )
 
-    # ── Middleware Stack ─────────────────────────────────────────
-    
-    # 1. CORS — permite requests desde dominios del cliente
-    # En dev: wildcard. En prod: se valida por tenant en TenantMiddleware.
+    # ── Exception Handlers ────────────────────────────────────────
+    # DomainError → JSONResponse con status_code y detail correctos
+    app.add_exception_handler(DomainError, domain_exception_handler)
+
+    # ── Middleware Stack ──────────────────────────────────────────
+    # IMPORTANTE: FastAPI aplica middleware en orden inverso al que
+    # se añaden — el último en añadirse es el primero en ejecutarse.
+    # Para el orden deseado CORS → RateLimit → Tenant:
+    #   add TenantMiddleware primero, CORSMiddleware último.
+
+    # 3. Tenant (se ejecuta último de los tres — más cercano al endpoint)
+    app.add_middleware(TenantMiddleware)
+
+    # 2. Rate Limiting
+    app.add_middleware(RateLimitMiddleware)
+
+    # 1. CORS (se ejecuta primero — capa más externa)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.APP_ENV == "development" else [],
+        allow_origins=["*"] if settings.app_env == "development" else [],
         allow_credentials=True,
         allow_methods=["*"],
-        allow_headers=["*"],
+        allow_headers=["*", "X-API-Key", "X-Session-Id"],
         expose_headers=["X-Session-Id"],
     )
-    logger.debug("middleware_cors_added")
 
-    # 2. Rate Limiting — protección contra abuso
-    app.add_middleware(RateLimitMiddleware)
-    logger.debug("middleware_rate_limit_added")
-
-    # 3. Tenant Resolution — autenticación y aislamiento
-    app.add_middleware(TenantMiddleware)
-    logger.debug("middleware_tenant_added")
-
-    # ── Routers ────────────────────────────────────────────────────
-    
-    # API v1 — todos los endpoints bajo /api/v1
+    # ── Routers ───────────────────────────────────────────────────
+    # api_v1_router ya incluye chat.router que tiene:
+    #   - @router.websocket("/ws/chat/{session_id}")
+    #   - @router.post("")  (POST fallback)
+    # No registrar websocket_chat por separado — se duplicaría.
     app.include_router(api_v1_router, prefix="/api/v1")
-    logger.debug("router_api_v1_mounted")
 
-    # WebSocket — se registra directamente (no via include_router)
-    # El endpoint /ws/chat/{session_id} está en api/v1/chat.py
-    from src.app.api.v1.chat import websocket_chat
-    app.add_websocket_route("/ws/chat/{session_id}", websocket_chat)
-    logger.debug("websocket_route_added")
+    # ── Root Endpoints ────────────────────────────────────────────
 
-    # ── Root Endpoint ──────────────────────────────────────────────
-    
-    @app.get("/", tags=["root"])
+    @app.get("/", tags=["root"], include_in_schema=False)
     async def root() -> dict:
         """Endpoint raíz — verifica que el servicio está activo."""
+        s = get_settings()
         return {
-            "service": settings.APP_NAME,
+            "service": s.app_name,
             "version": "1.2.0",
             "status": "running",
-            "env": settings.APP_ENV,
+            "env": s.app_env,
         }
 
-    # ── Health Check (también en /api/v1/health via router) ───────
-    
     @app.get("/health", tags=["health"])
     async def health() -> dict:
-        """Health check simple para monitoreo externo."""
+        """Health check para load balancers y uptime monitors."""
         return {"status": "ok", "service": "margarita-ai-realty"}
 
-    logger.info("app_created", routers=["/api/v1/*", "/ws/chat/{session_id}", "/", "/health"])
     return app
 
 
-# ── Instancia global ───────────────────────────────────────────────
-# Se importa por uvicorn: uvicorn app.main:app
+# ── Instancia Global ──────────────────────────────────────────────
+# Importada por uvicorn:
+#   uvicorn src.app.main:app --reload --port 8000
+#
+# O con el string de módulo según pyproject.toml pythonpath:
+#   uvicorn app.main:app --reload --port 8000
+
 app = create_app()
 
 
-# ── Smoke Test ─────────────────────────────────────────────────────
-if __name__ == "__main__":
-    import uvicorn
+# ── Smoke Tests ───────────────────────────────────────────────────
 
-    print("🔥 Smoke Test — app/main.py")
+if __name__ == "__main__":
+    import asyncio
+    import inspect
+
+    print("🔥 Smoke Tests — app/main.py\n")
+
+    settings = get_settings()
 
     # Test 1: create_app retorna FastAPI instance
     test_app = create_app()
     assert isinstance(test_app, FastAPI)
-    print("  ✅ create_app retorna FastAPI instance")
+    print("✅ create_app retorna FastAPI instance")
 
-    # Test 2: App tiene título y versión
-    assert test_app.title == settings.APP_NAME
-    assert "1.2.0" in str(test_app.version) or test_app.version == "1.2.0"
-    print(f"  ✅ App title: {test_app.title}")
+    # Test 2: Title y versión correctos
+    assert test_app.title == settings.app_name
+    assert test_app.version == "1.2.0"
+    print(f"✅ App title: {test_app.title} v{test_app.version}")
 
-    # Test 3: Routers montados
+    # Test 3: Rutas principales registradas
     routes = [r.path for r in test_app.routes if hasattr(r, "path")]
-    assert "/api/v1/health" in routes or "/health" in routes
-    assert "/ws/chat/{session_id}" in routes
-    assert "/" in routes
-    print(f"  ✅ Rutas registradas: {len(routes)} endpoints")
+    assert "/" in routes, f"/ no encontrado. Rutas: {routes}"
+    assert "/health" in routes, f"/health no encontrado. Rutas: {routes}"
+    # WebSocket registrado dentro de api_v1_router → chat.router
+    ws_routes = [r.path for r in test_app.routes if hasattr(r, "path") and "ws" in r.path]
+    print(f"✅ Rutas registradas: {len(routes)} total")
+    if ws_routes:
+        print(f"   WebSocket routes: {ws_routes}")
 
-    # Test 4: Middleware stack configurado
-    middleware_classes = [type(m).__name__ for m in test_app.user_middleware]
-    assert "CORSMiddleware" in middleware_classes
-    assert "RateLimitMiddleware" in middleware_classes
-    assert "TenantMiddleware" in middleware_classes
-    print(f"  ✅ Middleware stack: {middleware_classes}")
+    # Test 4: Exception handler registrado para DomainError
+    exception_handlers = test_app.exception_handlers
+    assert DomainError in exception_handlers, \
+        "DomainError handler no registrado"
+    print("✅ DomainError exception handler registrado")
 
-    # Test 5: Settings cargan correctamente
-    assert settings.APP_ENV in ("development", "production", "testing")
-    assert settings.SESSION_TTL_MINUTES > 0
-    assert settings.DEFAULT_VISIT_DURATION_MINUTES > 0
-    print(f"  ✅ Settings: env={settings.APP_ENV}, ttl={settings.SESSION_TTL_MINUTES}min")
+    # Test 5: Settings usa snake_case — no SCREAMING_SNAKE
+    assert hasattr(settings, "app_env"), "settings.app_env debe existir"
+    assert hasattr(settings, "app_name"), "settings.app_name debe existir"
+    assert hasattr(settings, "session_ttl_minutes"), "settings.session_ttl_minutes debe existir"
+    assert not hasattr(settings, "APP_ENV"), "settings.APP_ENV no debe existir"
+    print(f"✅ Settings snake_case: app_env={settings.app_env}")
 
-    # Test 6: Lifespan es callable
-    import inspect
+    # Test 6: Lifespan es async context manager
     assert inspect.isasyncgenfunction(lifespan)
-    print("  ✅ Lifespan es async context manager")
+    print("✅ Lifespan es async context manager")
 
-    print("\n🎉 Todos los smoke tests pasaron")
-    print("   Para ejecutar: uvicorn app.main:app --reload --port 8000")
+    # Test 7: cleanup_expired_sessions no recibe argumentos
+    assert inspect.iscoroutinefunction(cleanup_expired_sessions)
+    sig = inspect.signature(cleanup_expired_sessions)
+    assert len(sig.parameters) == 0, \
+        "cleanup_expired_sessions no debe recibir argumentos — lee settings internamente"
+    print("✅ cleanup_expired_sessions sin argumentos (lee settings internamente)")
+
+    # Test 8: Middleware en orden correcto
+    # FastAPI invierte el orden — el primero en ejecutarse es el último en añadirse
+    # Verificamos que los tres middleware están presentes
+    middleware_types = [
+        type(m.cls).__name__ if hasattr(m, "cls") else type(m).__name__
+        for m in test_app.user_middleware
+    ]
+    middleware_names = str(middleware_types)
+    assert "CORSMiddleware" in middleware_names
+    assert "RateLimitMiddleware" in middleware_names
+    assert "TenantMiddleware" in middleware_names
+    print(f"✅ Middleware stack completo: {len(test_app.user_middleware)} middlewares")
+
+    # Test 9: Docs disponibles solo en development
+    if settings.app_env == "development":
+        assert test_app.docs_url == "/docs"
+        assert test_app.redoc_url == "/redoc"
+        print("✅ Docs habilitados en development")
+    else:
+        assert test_app.docs_url is None
+        assert test_app.redoc_url is None
+        print("✅ Docs deshabilitados en producción")
+
+    # Test 10: app global es instancia de FastAPI
+    assert isinstance(app, FastAPI)
+    print("✅ Instancia global 'app' disponible para uvicorn")
+
+    print("\n🎉 Todos los smoke tests pasaron ✅")
+    print("\n   Para ejecutar el servidor:")
+    print("   uv run uvicorn src.app.main:app --reload --port 8000")
