@@ -103,7 +103,7 @@ def calculate_qualification_score(
     return QualificationResult(
         total_score=total_score,
         stage=stage,
-        signals_found=tuple(extracted.signals_found),,
+        signals_found=tuple(extracted.signals_found),
         missing_signals=tuple(missing),
         is_international=is_international,
         suggested_questions=tuple(questions),

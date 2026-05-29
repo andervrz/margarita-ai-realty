@@ -1,0 +1,62 @@
+modules = ["python-3.11"]
+[agent]
+expertMode = true
+stack = "BEST_EFFORT_FALLBACK"
+
+[nix]
+channel = "stable-25_05"
+packages = ["glibcLocales", "libxcrypt", "postgresql"]
+
+[userenv]
+
+[userenv.shared]
+APP_ENV = "development"
+APP_NAME = "Margarita AI Realty"
+LOG_LEVEL = "INFO"
+EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+EMBEDDING_DIMS = "384"
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = "587"
+SMTP_FROM_NAME = "Chatbot Inmobiliario Margarita"
+WHATSAPP_API_VERSION = "v18.0"
+GOOGLE_CALENDAR_CREDENTIALS_PATH = "./credentials.json"
+GOOGLE_CALENDAR_TIMEZONE = "America/Caracas"
+LLM_TIMEOUT = "30"
+EXTERNAL_API_TIMEOUT = "15"
+WEBSOCKET_HEARTBEAT_INTERVAL = "30"
+SESSION_TTL_MINUTES = "30"
+SESSION_CLEANUP_INTERVAL_SECONDS = "300"
+MAX_MESSAGES_IN_CONTEXT = "20"
+MAX_PROPERTIES_PER_RESPONSE = "3"
+DEFAULT_VISIT_DURATION_MINUTES = "60"
+QUALIFIER_BOOK_THRESHOLD = "75"
+QUALIFIER_QUALIFY_THRESHOLD = "40"
+SECRET_KEY = "4e95f35d95abd7108e0ca74ffd5b2eb8ec5fbb23dc48bf2c079c00fdd111cbcb"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python3 -m uvicorn src.app.main:app --host 0.0.0.0 --port 5000 --reload"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80

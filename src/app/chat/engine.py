@@ -38,11 +38,11 @@ from src.app.core.config import get_settings
 from src.app.core.logging import get_logger
 from src.app.db.models.message import Message
 from src.app.llm.client import LLMNoProviderAvailable, chat_completion
-from src.app.llm.prompts.booking import get_booking_prompt
-from src.app.llm.prompts.system_en import get_system_prompt_en
-from src.app.llm.prompts.system_es import get_system_prompt_es
+from src.app.llm.prompt.booking import get_booking_prompt
+from src.app.llm.prompt.system_en import get_system_prompt_en
+from src.app.llm.prompt.system_es import get_system_prompt_es
 from src.app.llm.router import get_chat_model
-from src.app.qualification.scorer import QualificationResult, calculate_qualification_score
+from src.app.qualification.score import QualificationResult, calculate_qualification_score
 from src.app.schemas.search import SearchResult
 from src.app.search.hybrid import hybrid_search
 

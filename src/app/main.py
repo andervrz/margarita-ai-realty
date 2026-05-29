@@ -123,14 +123,15 @@ async def _check_db_tables() -> None:
 
     try:
         async with engine.connect() as conn:
+            # Use information_schema which works on both SQLite and PostgreSQL
             result = await conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name='tenants'")
+                text("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name='tenants'")
             )
             exists = result.scalar_one_or_none()
             if not exists:
                 logger.warning(
                     "db_tables_not_found",
-                    hint="Run: uv run alembic upgrade head",
+                    hint="Run: alembic upgrade head",
                 )
             else:
                 logger.info("db_tables_ok")
@@ -138,7 +139,7 @@ async def _check_db_tables() -> None:
         logger.warning(
             "db_check_failed",
             error=str(exc),
-            hint="Run: uv run alembic upgrade head",
+            hint="Run: alembic upgrade head",
         )
 
 

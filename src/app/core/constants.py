@@ -70,6 +70,14 @@ class NotificationChannel(str, Enum):
     EMAIL = "email"
 
 
+class SearchSource(str, Enum):
+    """Fuente del resultado de búsqueda."""
+    SQL = "sql"
+    VEC = "vec"
+    HYBRID = "hybrid"
+    FALLBACK = "fallback"
+
+
 class IngestionStatus(str, Enum):
     """Estados del proceso de ingestion de CSV."""
     PENDING = "pending"

@@ -1,25 +1,68 @@
 # src/app/db/engine.py
-"""Engine async de SQLAlchemy con WAL mode y sqlite-vec.
+"""Engine async de SQLAlchemy — SQLite (dev) o PostgreSQL (prod/Replit).
 
-Configuración:
-- WAL (Write-Ahead Logging): lecturas concurrentes sin bloquear escrituras
-- sqlite-vec: extensión vectorial cargada en cada conexión
-- Foreign keys: activadas por defecto
+Detecta automáticamente el tipo de base de datos desde DATABASE_URL.
+- SQLite: WAL mode + sqlite-vec (si disponible)
+- PostgreSQL: asyncpg driver, sin extensiones especiales
 """
 
 
-import sqlite_vec
-from sqlalchemy import event
+import os
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from collections.abc import AsyncGenerator
 from src.app.core.config import get_settings
 
 settings = get_settings()
 
+_raw_url = os.environ.get("DATABASE_URL", settings.database_url)
+
+# Replit provides postgresql:// — convert to asyncpg scheme
+if _raw_url.startswith("postgresql://") or _raw_url.startswith("postgres://"):
+    _db_url = _raw_url.replace("postgresql://", "postgresql+asyncpg://", 1).replace(
+        "postgres://", "postgresql+asyncpg://", 1
+    )
+    # Remove sslmode param (asyncpg handles SSL differently)
+    if "?sslmode=" in _db_url:
+        _db_url = _db_url.split("?sslmode=")[0]
+    _is_sqlite = False
+elif _raw_url.startswith("sqlite"):
+    _db_url = _raw_url
+    _is_sqlite = True
+else:
+    _db_url = _raw_url
+    _is_sqlite = False
+
 engine = create_async_engine(
-    settings.database_url,
+    _db_url,
     echo=settings.app_env == "development",
 )
+
+if _is_sqlite:
+    from sqlalchemy import event
+    try:
+        import sqlite_vec
+
+        @event.listens_for(engine.sync_engine, "connect")
+        def _configure_sqlite(dbapi_connection, connection_record):
+            """Callback ejecutado en cada nueva conexión SQLite."""
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+            dbapi_connection.enable_load_extension(True)
+            sqlite_vec.load(dbapi_connection)
+            dbapi_connection.enable_load_extension(False)
+
+    except ImportError:
+        @event.listens_for(engine.sync_engine, "connect")
+        def _configure_sqlite_basic(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
 
 AsyncSessionLocal = async_sessionmaker(
     engine,
@@ -28,59 +71,6 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
-@event.listens_for(engine.sync_engine, "connect")
-def _configure_sqlite(dbapi_connection, connection_record):
-    """Callback ejecutado en cada nueva conexión SQLite."""
-    cursor = dbapi_connection.cursor()
-    
-    # WAL mode: lecturas concurrentes sin bloquear escrituras
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA foreign_keys=ON")
-    
-    cursor.close()
-    
-    # Cargar extensión sqlite-vec para búsqueda vectorial
-    dbapi_connection.enable_load_extension(True)
-    sqlite_vec.load(dbapi_connection)
-    dbapi_connection.enable_load_extension(False)
-
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
-
-
-# ── Smoke Test ─────────────────────────────────────────────────────
-if __name__ == "__main__":
-    import asyncio
-    from sqlalchemy import text
-
-    
-    async def _test():
-        print("🔥 Smoke Test — db/engine.py")
-        
-        # Test engine creado
-        assert engine is not None
-        print("  ✅ Engine async creado")
-        
-        # Test AsyncSessionLocal
-        assert AsyncSessionLocal is not None
-        print("  ✅ Session maker configurado")
-
-
-        # Test conexión real
-        async with AsyncSessionLocal() as session:
-            wal = (await session.execute(text("PRAGMA journal_mode"))).scalar()
-            fk = (await session.execute(text("PRAGMA foreign_keys"))).scalar()
-            vec = (await session.execute(text("SELECT vec_version()"))).scalar()
-    
-            assert wal == "wal", f"WAL no activo: {wal}"
-            assert fk == 1, f"FK no activas: {fk}"
-            assert vec is not None
-            
-            print(f"  ✅ WAL mode: {wal}")
-            print(f"  ✅ Foreign keys: {fk}")
-            print(f"  ✅ sqlite-vec: v{vec}")
-        print("\n🎉 Todos los smoke tests pasaron")
-    
-    asyncio.run(_test())

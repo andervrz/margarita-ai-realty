@@ -36,7 +36,7 @@ from src.app.db.engine import AsyncSessionLocal
 
 logger = get_logger(__name__)
 
-router = APIRouter(tags=["chat"])
+router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 # ── Connection Manager ────────────────────────────────────────────
