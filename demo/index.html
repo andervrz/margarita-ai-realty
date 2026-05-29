@@ -1,5 +1,4 @@
-
-<!-- project/demo/index.html -->
+<!-- demo/index.html -->
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -7,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Demo — Margarita AI Realty Chatbot</title>
     <style>
-        /* ── Reset & Base ─────────────────────────────────────────── */
+        /* ── Reset & Base ────────────────────────────────────────── */
         *, *::before, *::after {
             margin: 0;
             padding: 0;
@@ -15,7 +14,8 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+                         Oxygen, Ubuntu, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
@@ -24,7 +24,7 @@
             padding: 20px;
         }
 
-        /* ── Demo Container ────────────────────────────────────────── */
+        /* ── Chat Container ──────────────────────────────────────── */
         .demo-container {
             width: 100%;
             max-width: 420px;
@@ -32,13 +32,13 @@
             min-height: 600px;
             background: #fff;
             border-radius: 20px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
             display: flex;
             flex-direction: column;
             overflow: hidden;
         }
 
-        /* ── Header ────────────────────────────────────────────────── */
+        /* ── Header ──────────────────────────────────────────────── */
         .chat-header {
             background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
             color: white;
@@ -72,23 +72,15 @@
             background: #22c55e;
             animation: pulse 2s infinite;
         }
-
-        .status-dot.disconnected {
-            background: #ef4444;
-            animation: none;
-        }
-
-        .status-dot.connecting {
-            background: #f59e0b;
-            animation: pulse 1s infinite;
-        }
+        .status-dot.disconnected { background: #ef4444; animation: none; }
+        .status-dot.connecting   { background: #f59e0b; animation: pulse 1s infinite; }
 
         @keyframes pulse {
             0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+            50%       { opacity: 0.5; }
         }
 
-        /* ── Messages Area ─────────────────────────────────────────── */
+        /* ── Messages ────────────────────────────────────────────── */
         .messages-area {
             flex: 1;
             overflow-y: auto;
@@ -111,10 +103,10 @@
 
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            to   { opacity: 1; transform: translateY(0); }
         }
 
-        .message.user {
+        .message.user  {
             align-self: flex-end;
             background: #3b82f6;
             color: white;
@@ -126,7 +118,7 @@
             background: white;
             color: #1e293b;
             border-bottom-left-radius: 4px;
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
         }
 
         .message.error {
@@ -137,16 +129,19 @@
             font-size: 0.875rem;
         }
 
-        .message.typing {
-            align-self: flex-start;
-            background: white;
-            padding: 16px 20px;
+        .message.system {
+            align-self: center;
+            background: #f0fdf4;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+            font-size: 0.8125rem;
+            max-width: 90%;
         }
 
-        .typing-dots {
-            display: flex;
-            gap: 6px;
-        }
+        /* ── Typing Indicator ────────────────────────────────────── */
+        .message.typing { align-self: flex-start; background: white; padding: 16px 20px; }
+
+        .typing-dots { display: flex; gap: 6px; }
 
         .typing-dots span {
             width: 8px;
@@ -161,16 +156,11 @@
 
         @keyframes typingBounce {
             0%, 80%, 100% { transform: scale(0); }
-            40% { transform: scale(1); }
+            40%           { transform: scale(1); }
         }
 
-        /* ── Properties Cards ──────────────────────────────────────── */
-        .property-cards {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            margin-top: 8px;
-        }
+        /* ── Property Cards ──────────────────────────────────────── */
+        .property-cards { display: flex; flex-direction: column; gap: 10px; }
 
         .property-card {
             background: #f1f5f9;
@@ -192,19 +182,14 @@
             font-weight: 600;
         }
 
-        .property-card .details {
+        .property-card .tags {
             font-size: 0.8125rem;
             color: #64748b;
             margin-top: 4px;
         }
 
-        /* ── Quick Replies ─────────────────────────────────────────── */
-        .quick-replies {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 10px;
-        }
+        /* ── Quick Replies ───────────────────────────────────────── */
+        .quick-replies { display: flex; flex-wrap: wrap; gap: 8px; }
 
         .quick-reply {
             background: #eff6ff;
@@ -217,12 +202,21 @@
             transition: all 0.2s;
         }
 
-        .quick-reply:hover {
-            background: #3b82f6;
-            color: white;
+        .quick-reply:hover { background: #3b82f6; color: white; }
+
+        /* ── Booking Stage ───────────────────────────────────────── */
+        .booking-badge {
+            display: inline-block;
+            background: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fde68a;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            margin-bottom: 6px;
         }
 
-        /* ── Input Area ────────────────────────────────────────────── */
+        /* ── Input ───────────────────────────────────────────────── */
         .input-area {
             padding: 16px 20px;
             background: white;
@@ -242,14 +236,8 @@
             transition: border-color 0.2s;
         }
 
-        .input-area input:focus {
-            border-color: #3b82f6;
-        }
-
-        .input-area input:disabled {
-            background: #f1f5f9;
-            cursor: not-allowed;
-        }
+        .input-area input:focus    { border-color: #3b82f6; }
+        .input-area input:disabled { background: #f1f5f9; cursor: not-allowed; }
 
         .input-area button {
             width: 44px;
@@ -263,18 +251,13 @@
             align-items: center;
             justify-content: center;
             transition: background 0.2s;
+            flex-shrink: 0;
         }
 
-        .input-area button:hover:not(:disabled) {
-            background: #2563eb;
-        }
+        .input-area button:hover:not(:disabled) { background: #2563eb; }
+        .input-area button:disabled { background: #94a3b8; cursor: not-allowed; }
 
-        .input-area button:disabled {
-            background: #94a3b8;
-            cursor: not-allowed;
-        }
-
-        /* ── Session Info ──────────────────────────────────────────── */
+        /* ── Footer ──────────────────────────────────────────────── */
         .session-info {
             padding: 8px 20px;
             background: #f1f5f9;
@@ -284,15 +267,12 @@
             border-top: 1px solid #e2e8f0;
         }
 
-        /* ── Scrollbar ─────────────────────────────────────────────── */
-        .messages-area::-webkit-scrollbar {
-            width: 6px;
-        }
+        .session-info a { color: #3b82f6; text-decoration: none; }
+        .session-info a:hover { text-decoration: underline; }
 
-        .messages-area::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
+        /* ── Scrollbar ───────────────────────────────────────────── */
+        .messages-area::-webkit-scrollbar       { width: 6px; }
+        .messages-area::-webkit-scrollbar-track { background: transparent; }
         .messages-area::-webkit-scrollbar-thumb {
             background: #cbd5e1;
             border-radius: 3px;
@@ -300,343 +280,377 @@
     </style>
 </head>
 <body>
-    <div class="demo-container">
-        <!-- Header -->
-        <div class="chat-header">
-            <h1>🏝️ Margarita AI Realty</h1>
-            <p>Tu asistente inmobiliario en la Perla del Caribe</p>
-            <div class="status-indicator">
-                <span class="status-dot connecting" id="statusDot"></span>
-                <span id="statusText">Conectando...</span>
-            </div>
-        </div>
+<div class="demo-container">
 
-        <!-- Messages -->
-        <div class="messages-area" id="messagesArea">
-            <!-- Los mensajes se insertan aquí dinámicamente -->
-        </div>
-
-        <!-- Input -->
-        <div class="input-area">
-            <input 
-                type="text" 
-                id="messageInput" 
-                placeholder="Escribe tu mensaje..."
-                autocomplete="off"
-                disabled
-            >
-            <button id="sendButton" disabled>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13"></line>
-                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                </svg>
-            </button>
-        </div>
-
-        <!-- Session Info -->
-        <div class="session-info">
-            Session ID: <span id="sessionId">—</span> | 
-            <a href="#" id="newSessionLink">Nueva sesión</a>
+    <!-- Header -->
+    <div class="chat-header">
+        <h1>🏝️ Margarita AI Realty</h1>
+        <p>Tu asistente inmobiliario en la Perla del Caribe</p>
+        <div class="status-indicator">
+            <span class="status-dot connecting" id="statusDot"></span>
+            <span id="statusText">Conectando...</span>
         </div>
     </div>
 
-    <script>
-        // ── Configuración ───────────────────────────────────────────
-        const CONFIG = {
-            WS_URL: 'ws://localhost:8000/ws/chat/',
-            API_URL: 'http://localhost:8000/api/v1/chat',
-            HEARTBEAT_INTERVAL: 30000,  // 30s
-            RECONNECT_DELAY: 3000,      // 3s
-            MAX_RECONNECT_ATTEMPTS: 5,
-        };
+    <!-- Messages -->
+    <div class="messages-area" id="messagesArea"></div>
 
-        // ── Estado ────────────────────────────────────────────────────
-        let ws = null;
-        let sessionId = localStorage.getItem('chat_session_id') || generateSessionId();
-        let reconnectAttempts = 0;
-        let heartbeatInterval = null;
-        let isConnecting = false;
+    <!-- Input -->
+    <div class="input-area">
+        <input
+            type="text"
+            id="messageInput"
+            placeholder="Escribe tu mensaje..."
+            autocomplete="off"
+            disabled
+        >
+        <button id="sendButton" disabled aria-label="Enviar mensaje">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+        </button>
+    </div>
 
-        // ── DOM Elements ─────────────────────────────────────────────
-        const messagesArea = document.getElementById('messagesArea');
-        const messageInput = document.getElementById('messageInput');
-        const sendButton = document.getElementById('sendButton');
-        const statusDot = document.getElementById('statusDot');
-        const statusText = document.getElementById('statusText');
-        const sessionIdSpan = document.getElementById('sessionId');
-        const newSessionLink = document.getElementById('newSessionLink');
+    <!-- Footer -->
+    <div class="session-info">
+        Session: <span id="sessionId">—</span> |
+        <a href="#" id="newSessionLink">Nueva sesión</a>
+    </div>
 
-        // ── Session ID ────────────────────────────────────────────────
-        sessionIdSpan.textContent = sessionId.substring(0, 8) + '...';
+</div>
 
-        function generateSessionId() {
-            return 'sess_' + Math.random().toString(36).substring(2, 15) + 
-                   Math.random().toString(36).substring(2, 15);
+<script>
+// ── Configuración ─────────────────────────────────────────────────
+// Ajusta WS_HOST y API_HOST si el servidor corre en otro puerto u host
+const CONFIG = {
+    WS_HOST:              'ws://localhost:8000',
+    API_HOST:             'http://localhost:8000',
+    // Rutas según router setup:
+    //   chat.router sin prefix, montado en api_v1_router → /api/v1
+    //   WebSocket: /api/v1/ws/chat/{session_id}
+    //   POST:      /api/v1
+    WS_PATH:              '/api/v1/ws/chat/',
+    API_PATH:             '/api/v1',
+    RECONNECT_DELAY_MS:   3000,
+    MAX_RECONNECT:        5,
+    STORAGE_KEY:          'margarita_realty_session_id',
+};
+
+// ── Estado ────────────────────────────────────────────────────────
+let ws                = null;
+let sessionId         = localStorage.getItem(CONFIG.STORAGE_KEY) || generateSessionId();
+let reconnectAttempts = 0;
+let isConnecting      = false;
+
+// ── DOM ───────────────────────────────────────────────────────────
+const messagesArea  = document.getElementById('messagesArea');
+const messageInput  = document.getElementById('messageInput');
+const sendButton    = document.getElementById('sendButton');
+const statusDot     = document.getElementById('statusDot');
+const statusText    = document.getElementById('statusText');
+const sessionIdSpan = document.getElementById('sessionId');
+const newSessionLink= document.getElementById('newSessionLink');
+
+// Mostrar session ID truncado
+sessionIdSpan.textContent = sessionId.substring(0, 8) + '…';
+
+// ── Helpers ───────────────────────────────────────────────────────
+
+/** Genera UUID v4 usando la Web Crypto API (disponible en todos los browsers modernos). */
+function generateSessionId() {
+    const id = crypto.randomUUID();
+    localStorage.setItem(CONFIG.STORAGE_KEY, id);
+    return id;
+}
+
+function escapeHtml(text) {
+    const el = document.createElement('div');
+    el.textContent = String(text ?? '');
+    return el.innerHTML;
+}
+
+function scrollToBottom() {
+    messagesArea.scrollTop = messagesArea.scrollHeight;
+}
+
+function updateStatus(state, text) {
+    statusDot.className = 'status-dot ' + state;
+    statusText.textContent = text;
+}
+
+function enableInput(enabled) {
+    messageInput.disabled = !enabled;
+    sendButton.disabled   = !enabled;
+    if (enabled) messageInput.focus();
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────
+
+function connect() {
+    if (isConnecting || (ws && ws.readyState === WebSocket.OPEN)) return;
+
+    isConnecting = true;
+    updateStatus('connecting', 'Conectando...');
+
+    const url = CONFIG.WS_HOST + CONFIG.WS_PATH + sessionId;
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+        console.log('[WS] Conectado:', url);
+        isConnecting      = false;
+        reconnectAttempts = 0;
+        updateStatus('connected', 'En línea');
+        enableInput(true);
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            handleServerMessage(JSON.parse(event.data));
+        } catch (err) {
+            console.error('[WS] Error parseando mensaje:', err);
         }
+    };
 
-        // ── WebSocket Connection ────────────────────────────────────
-        function connect() {
-            if (isConnecting || (ws && ws.readyState === WebSocket.OPEN)) return;
-            
-            isConnecting = true;
-            updateStatus('connecting', 'Conectando...');
+    ws.onclose = (event) => {
+        console.log('[WS] Cerrado. Código:', event.code);
+        isConnecting = false;
+        enableInput(false);
 
-            ws = new WebSocket(CONFIG.WS_URL + sessionId);
-
-            ws.onopen = () => {
-                console.log('WebSocket connected');
-                isConnecting = false;
-                reconnectAttempts = 0;
-                updateStatus('connected', 'En línea');
-                enableInput(true);
-                startHeartbeat();
-            };
-
-            ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    handleMessage(data);
-                } catch (err) {
-                    console.error('Error parsing message:', err);
-                }
-            };
-
-            ws.onclose = () => {
-                console.log('WebSocket closed');
-                isConnecting = false;
-                stopHeartbeat();
-                enableInput(false);
-                
-                if (reconnectAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS) {
-                    updateStatus('connecting', `Reconectando (${reconnectAttempts + 1}/${CONFIG.MAX_RECONNECT_ATTEMPTS})...`);
-                    reconnectAttempts++;
-                    setTimeout(connect, CONFIG.RECONNECT_DELAY);
-                } else {
-                    updateStatus('disconnected', 'Desconectado. Recarga la página.');
-                    // Fallback a POST
-                    enableInput(true);
-                }
-            };
-
-            ws.onerror = (err) => {
-                console.error('WebSocket error:', err);
-                isConnecting = false;
-            };
+        if (reconnectAttempts < CONFIG.MAX_RECONNECT) {
+            reconnectAttempts++;
+            const attempt = `${reconnectAttempts}/${CONFIG.MAX_RECONNECT}`;
+            updateStatus('connecting', `Reconectando (${attempt})…`);
+            setTimeout(connect, CONFIG.RECONNECT_DELAY_MS);
+        } else {
+            updateStatus('disconnected', 'Sin conexión — usando modo HTTP');
+            enableInput(true);  // POST fallback sigue disponible
+            addSystemMessage('⚠️ WebSocket desconectado. Los mensajes se enviarán por HTTP.');
         }
+    };
 
-        // ── Heartbeat ─────────────────────────────────────────────────
-        function startHeartbeat() {
-            heartbeatInterval = setInterval(() => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ type: 'pong' }));
-                }
-            }, CONFIG.HEARTBEAT_INTERVAL);
+    ws.onerror = (err) => {
+        console.error('[WS] Error:', err);
+        isConnecting = false;
+    };
+}
+
+// ── Manejar mensajes del servidor ─────────────────────────────────
+
+function handleServerMessage(data) {
+    // Responder ping del servidor con pong — mantiene la conexión viva
+    if (data.type === 'ping') {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'pong' }));
         }
+        return;  // No mostrar nada al usuario
+    }
 
-        function stopHeartbeat() {
-            if (heartbeatInterval) {
-                clearInterval(heartbeatInterval);
-                heartbeatInterval = null;
-            }
+    removeTypingIndicator();
+
+    if (data.type === 'error') {
+        addMessage(data.content || 'Error desconocido.', 'error');
+        return;
+    }
+
+    // Texto principal del bot
+    if (data.content) {
+        const div = addMessage(data.content, 'bot');
+
+        // Badge de booking si está activo
+        if (data.is_booking_active && data.booking_step) {
+            const badge = document.createElement('div');
+            badge.className = 'booking-badge';
+            badge.textContent = `📋 Paso: ${data.booking_step}`;
+            div.prepend(badge);
         }
+    }
 
-        // ── Message Handling ────────────────────────────────────────
-        function handleMessage(data) {
-            // Responder a pings del servidor
-            if (data.type === 'ping') {
-                ws.send(JSON.stringify({ type: 'pong' }));
-                return;
-            }
+    // Cards de propiedades
+    if (Array.isArray(data.properties) && data.properties.length > 0) {
+        addPropertyCards(data.properties);
+    }
 
-            removeTypingIndicator();
+    // Quick replies / sugerencias
+    if (Array.isArray(data.suggestions) && data.suggestions.length > 0) {
+        addQuickReplies(data.suggestions);
+    }
 
-            if (data.type === 'error') {
-                addMessage(data.content, 'error');
-                return;
-            }
+    // Debug en console (no en UI)
+    if (data.qualification_score !== undefined) {
+        console.log('[Qualifier] score:', data.qualification_score,
+                    '| stage:', data.qualification_stage,
+                    '| lang:', data.language);
+    }
+}
 
-            // Mensaje normal del bot
-            addMessage(data.content, 'bot');
+// ── Construir UI ──────────────────────────────────────────────────
 
-            // Mostrar propiedades si vienen
-            if (data.properties && data.properties.length > 0) {
-                addPropertyCards(data.properties);
-            }
+function addMessage(text, type) {
+    const div = document.createElement('div');
+    div.className = `message ${type}`;
+    div.textContent = text;
+    messagesArea.appendChild(div);
+    scrollToBottom();
+    return div;
+}
 
-            // Mostrar quick replies si vienen
-            if (data.suggestions && data.suggestions.length > 0) {
-                addQuickReplies(data.suggestions);
-            }
+function addSystemMessage(text) {
+    const div = document.createElement('div');
+    div.className = 'message system';
+    div.textContent = text;
+    messagesArea.appendChild(div);
+    scrollToBottom();
+}
 
-            // Actualizar score si viene
-            if (data.qualification_score !== undefined) {
-                console.log('Qualification score:', data.qualification_score);
-            }
-        }
+function addPropertyCards(properties) {
+    const cards = document.createElement('div');
+    cards.className = 'property-cards';
 
-        // ── UI Functions ──────────────────────────────────────────────
-        function addMessage(text, type) {
-            const div = document.createElement('div');
-            div.className = `message ${type}`;
-            div.textContent = text;
-            messagesArea.appendChild(div);
-            scrollToBottom();
-        }
+    properties.forEach(prop => {
+        const card = document.createElement('div');
+        card.className = 'property-card';
 
-        function addPropertyCards(properties) {
-            const container = document.createElement('div');
-            container.className = 'property-cards';
-            
-            properties.forEach(prop => {
-                const card = document.createElement('div');
-                card.className = 'property-card';
-                card.innerHTML = `
-                    <h4>${escapeHtml(prop.title || 'Propiedad')}</h4>
-                    <div class="price">$${(prop.price_usd || 0).toLocaleString()} USD</div>
-                    <div class="details">
-                        ${prop.location_zone || ''} · 
-                        ${prop.bedrooms || '-'} hab · 
-                        ${prop.bathrooms || '-'} baños · 
-                        ${prop.area_m2 || '-'} m²
-                        ${prop.vista_al_mar ? '· 🌊 Vista al mar' : ''}
-                    </div>
-                `;
-                container.appendChild(card);
-            });
+        const price = prop.price_usd
+            ? `$${Number(prop.price_usd).toLocaleString('es-VE')} USD`
+            : 'Precio: consultar';
 
-            const wrapper = document.createElement('div');
-            wrapper.className = 'message bot';
-            wrapper.appendChild(container);
-            messagesArea.appendChild(wrapper);
-            scrollToBottom();
-        }
+        const flags = [
+            prop.vista_al_mar  ? '🌊 Vista al mar'    : '',
+            prop.frente_playa  ? '🏖️ Frente playa'   : '',
+            prop.uso_vacacional? '💰 Vacacional'       : '',
+        ].filter(Boolean).join(' · ');
 
-        function addQuickReplies(suggestions) {
-            const container = document.createElement('div');
-            container.className = 'quick-replies';
-            
-            suggestions.forEach(text => {
-                const btn = document.createElement('button');
-                btn.className = 'quick-reply';
-                btn.textContent = text;
-                btn.onclick = () => sendMessage(text);
-                container.appendChild(btn);
-            });
+        card.innerHTML = `
+            <h4>${escapeHtml(prop.title || 'Propiedad')}</h4>
+            <div class="price">${price}</div>
+            <div class="tags">
+                ${escapeHtml(prop.location_zone || '')}
+                ${prop.bedrooms  ? `· ${prop.bedrooms}H` : ''}
+                ${prop.bathrooms ? `/${prop.bathrooms}B` : ''}
+                ${prop.area_m2   ? `· ${prop.area_m2}m²` : ''}
+                ${flags          ? `· ${flags}` : ''}
+            </div>
+        `;
+        cards.appendChild(card);
+    });
 
-            const wrapper = document.createElement('div');
-            wrapper.className = 'message bot';
-            wrapper.style.background = 'transparent';
-            wrapper.style.boxShadow = 'none';
-            wrapper.style.padding = '0';
-            wrapper.appendChild(container);
-            messagesArea.appendChild(wrapper);
-            scrollToBottom();
-        }
+    const wrapper = document.createElement('div');
+    wrapper.className = 'message bot';
+    wrapper.style.padding = '12px';
+    wrapper.appendChild(cards);
+    messagesArea.appendChild(wrapper);
+    scrollToBottom();
+}
 
-        function showTypingIndicator() {
-            removeTypingIndicator();
-            const div = document.createElement('div');
-            div.className = 'message typing';
-            div.id = 'typingIndicator';
-            div.innerHTML = `
-                <div class="typing-dots">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                </div>
-            `;
-            messagesArea.appendChild(div);
-            scrollToBottom();
-        }
+function addQuickReplies(suggestions) {
+    const container = document.createElement('div');
+    container.className = 'quick-replies';
 
-        function removeTypingIndicator() {
-            const indicator = document.getElementById('typingIndicator');
-            if (indicator) indicator.remove();
-        }
+    suggestions.forEach(text => {
+        const btn = document.createElement('button');
+        btn.className = 'quick-reply';
+        btn.textContent = text;
+        btn.addEventListener('click', () => {
+            // Eliminar los quick replies al seleccionar uno
+            container.closest('.message')?.remove();
+            sendMessage(text);
+        });
+        container.appendChild(btn);
+    });
 
-        function scrollToBottom() {
-            messagesArea.scrollTop = messagesArea.scrollHeight;
-        }
+    const wrapper = document.createElement('div');
+    wrapper.className = 'message bot';
+    wrapper.style.cssText = 'background:transparent;box-shadow:none;padding:4px 0;';
+    wrapper.appendChild(container);
+    messagesArea.appendChild(wrapper);
+    scrollToBottom();
+}
 
-        function updateStatus(state, text) {
-            statusDot.className = 'status-dot ' + state;
-            statusText.textContent = text;
-        }
+function showTypingIndicator() {
+    removeTypingIndicator();
+    const div = document.createElement('div');
+    div.className = 'message typing';
+    div.id = 'typingIndicator';
+    div.innerHTML = `<div class="typing-dots"><span></span><span></span><span></span></div>`;
+    messagesArea.appendChild(div);
+    scrollToBottom();
+}
 
-        function enableInput(enabled) {
-            messageInput.disabled = !enabled;
-            sendButton.disabled = !enabled;
-        }
+function removeTypingIndicator() {
+    document.getElementById('typingIndicator')?.remove();
+}
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
+// ── Enviar mensaje ────────────────────────────────────────────────
 
-        // ── Send Message ──────────────────────────────────────────────
-        function sendMessage(text) {
-            if (!text.trim()) return;
+function sendMessage(text) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
 
-            addMessage(text, 'user');
-            messageInput.value = '';
-            showTypingIndicator();
+    addMessage(trimmed, 'user');
+    messageInput.value = '';
+    showTypingIndicator();
 
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ message: text }));
-            } else {
-                // Fallback a POST
-                sendViaHttp(text);
-            }
-        }
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ message: trimmed }));
+    } else {
+        // Fallback HTTP cuando WebSocket no está disponible
+        sendViaHttp(trimmed);
+    }
+}
 
-        async function sendViaHttp(text) {
-            try {
-                const response = await fetch(CONFIG.API_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Session-Id': sessionId,
-                        'X-API-Key': 'dev',
-                    },
-                    body: JSON.stringify({ message: text }),
-                });
-
-                if (!response.ok) throw new Error('HTTP ' + response.status);
-
-                const data = await response.json();
-                handleMessage(data);
-            } catch (err) {
-                console.error('POST fallback failed:', err);
-                removeTypingIndicator();
-                addMessage('Error de conexión. Intenta de nuevo.', 'error');
-            }
-        }
-
-        // ── Event Listeners ───────────────────────────────────────────
-        sendButton.addEventListener('click', () => {
-            sendMessage(messageInput.value);
+async function sendViaHttp(text) {
+    try {
+        const response = await fetch(CONFIG.API_HOST + CONFIG.API_PATH, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Session-Id': sessionId,
+                'X-API-Key':    'dev',  // DEV_TENANT en development
+            },
+            body: JSON.stringify({ message: text }),
         });
 
-        messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                sendMessage(messageInput.value);
-            }
-        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
 
-        newSessionLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            sessionId = generateSessionId();
-            localStorage.setItem('chat_session_id', sessionId);
-            sessionIdSpan.textContent = sessionId.substring(0, 8) + '...';
-            messagesArea.innerHTML = '';
-            if (ws) ws.close();
-            connect();
-        });
+        handleServerMessage(await response.json());
 
-        // ── Init ──────────────────────────────────────────────────────
-        connect();
-    </script>
+    } catch (err) {
+        console.error('[HTTP] Fallback failed:', err);
+        removeTypingIndicator();
+        addMessage(`Error: ${err.message}`, 'error');
+    }
+}
+
+// ── Event Listeners ───────────────────────────────────────────────
+
+sendButton.addEventListener('click', () => sendMessage(messageInput.value));
+
+messageInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage(messageInput.value);
+    }
+});
+
+newSessionLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    sessionId = generateSessionId();
+    sessionIdSpan.textContent = sessionId.substring(0, 8) + '…';
+    messagesArea.innerHTML = '';
+    reconnectAttempts = 0;
+    if (ws) ws.close();
+    connect();
+    addSystemMessage('✅ Nueva sesión iniciada.');
+});
+
+// ── Init ──────────────────────────────────────────────────────────
+connect();
+</script>
 </body>
 </html>
-
