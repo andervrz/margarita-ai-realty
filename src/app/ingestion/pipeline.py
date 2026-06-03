@@ -155,7 +155,10 @@ class IngestionPipeline:
         
         # Generar raw_embed_text
         raw_text = generate_raw_embed_text(row_dict)
-        
+
+        # Generar embedding vectorial para pgvector
+        embedding = await embed_text(raw_text)
+
         if existing:
             if existing.property_hash == new_hash:
                 stats["skipped"] += 1

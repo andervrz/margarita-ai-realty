@@ -1,134 +1,34 @@
 # src/app/search/vec_search.py
-"""Vec Search — Capa 3: Búsqueda semántica con sqlite-vec.
+"""Vec Search — Capa 3: Búsqueda semántica con pgvector (PostgreSQL).
 
 Solo se invoca cuando SQL Search retorna vacío.
 
 Flujo:
-  1. Verificar tabla vectorial del tenant
-  2. Generar embedding del query (lazy load, thread-safe)
-  3. KNN search en sqlite-vec (thread pool)
-  4. Cargar propiedades completas desde SQLite
-  5. Post-filtering estricto en Python
-  6. Re-ordenar por similitud original
+  1. Generar embedding del query (desde embedder.py — lazy load, thread-safe)
+  2. KNN search con pgvector (cosine distance ORDER BY)
+  3. Post-filtering estricto en Python
+  4. Limitar resultados finales
 """
 
 from __future__ import annotations
 
-import asyncio
 import time
-from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.config import get_settings
 from src.app.core.logging import get_logger
-from src.app.db.engine import engine
 from src.app.db.models.property import Property
+from src.app.ingestion.embedder import embed_text
 from src.app.schemas.property import PropertyChatSummary
 from src.app.schemas.search import FilterQuery, SearchResult
 
-import os as _os
-_VEC_AVAILABLE = not _os.environ.get("DATABASE_URL", "").startswith("postgresql")
-
 logger = get_logger(__name__)
-
-# ── Lazy Load Thread-Safe del Modelo ─────────────────────────────
-
-_embedding_model = None
-_embedding_model_lock = asyncio.Lock()
-
-
-async def _get_embedding_model_async():
-    """Carga el modelo de embeddings (lazy singleton thread-safe)."""
-    global _embedding_model
-    if _embedding_model is None:
-        async with _embedding_model_lock:
-            if _embedding_model is None:
-                settings = get_settings()
-                logger.info("loading_embedding_model", model=settings.embedding_model)
-                from fastembed import TextEmbedding
-                _embedding_model = await asyncio.to_thread(
-                    TextEmbedding,
-                    settings.embedding_model,
-                )
-    return _embedding_model
-
-
-async def _generate_embedding(query: str):
-    """Genera embedding como numpy array. Corre en thread pool."""
-    import numpy as np
-    settings = get_settings()
-    model = await _get_embedding_model_async()
-    embedding = await asyncio.to_thread(
-        lambda: list(model.embed([query]))[0]
-    )
-    if embedding.shape[-1] != settings.embedding_dims:
-        raise ValueError(
-            f"Embedding dims mismatch: expected {settings.embedding_dims}, "
-            f"got {embedding.shape[-1]}"
-        )
-    return embedding.astype(np.float32)
-
-
-def _embedding_to_blob(embedding) -> bytes:
-    """Convierte embedding a blob little-endian para sqlite-vec."""
-    return embedding.astype("float32").newbyteorder("<").tobytes()
-
-
-# ── Gestión de Tablas Vectoriales ────────────────────────────────
-
-def _get_vector_table_name(tenant_id: str) -> str:
-    """Genera nombre de tabla seguro para sqlite-vec."""
-    safe = "".join(
-        c if c.isalnum() or c == "_" else "_"
-        for c in tenant_id.lower()
-    )
-    return f"property_embeddings_{safe}"
-
-
-async def ensure_vector_table(tenant_id: str) -> str:
-    """Crea tabla virtual sqlite-vec si no existe."""
-    settings = get_settings()
-    table_name = _get_vector_table_name(tenant_id)
-
-    def _create_sync():
-        with engine.sync_engine.connect() as conn:
-            exists = conn.execute(
-                text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:name"),
-                {"name": table_name},
-            ).scalar()
-            if exists:
-                return
-            conn.execute(text(f"""
-                CREATE VIRTUAL TABLE {table_name}
-                USING vec0(
-                    property_id TEXT PRIMARY KEY,
-                    embedding FLOAT[{settings.embedding_dims}]
-                )
-            """))
-            conn.commit()
-            logger.info("vec_table_created", tenant_id=tenant_id, table=table_name)
-
-    await asyncio.to_thread(_create_sync)
-    return table_name
-
-
-async def _vector_table_exists(tenant_id: str) -> bool:
-    """Verifica si la tabla vectorial del tenant existe."""
-    table_name = _get_vector_table_name(tenant_id)
-
-    def _check_sync():
-        with engine.sync_engine.connect() as conn:
-            return conn.execute(
-                text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:name"),
-                {"name": table_name},
-            ).scalar() is not None
-
-    return await asyncio.to_thread(_check_sync)
 
 
 # ── Post-Filtering en Python ──────────────────────────────────────
+# Lógica idéntica al original — se aplica sobre los candidatos
+# que pgvector devuelve ordenados por similitud coseno.
 
 def _passes_numeric_filters(prop: Property, filters: FilterQuery) -> bool:
     checks = [
@@ -171,22 +71,15 @@ def _apply_hard_filters(
     properties: list[Property],
     filters: FilterQuery,
 ) -> list[Property]:
-    """Aplica todos los filtros duros en Python post-vector-search."""
+    """Aplica todos los filtros duros en Python post-vector-search.
+    Preserva el orden de similitud que pgvector ya garantiza.
+    """
     return [
         p for p in properties
         if _passes_numeric_filters(p, filters)
         and _passes_boolean_filters(p, filters)
         and _passes_text_filters(p, filters)
     ]
-
-
-def _reorder_by_similarity(
-    properties: list[Property],
-    candidate_order: list[str],
-) -> list[Property]:
-    """Re-ordena por similitud vectorial original."""
-    rank = {pid: idx for idx, pid in enumerate(candidate_order)}
-    return sorted(properties, key=lambda p: rank.get(p.id, float("inf")))
 
 
 # ── Función Principal ─────────────────────────────────────────────
@@ -199,43 +92,33 @@ async def search_properties_vec(
     k_vec: int = 20,
 ) -> SearchResult:
     """
-    Búsqueda semántica con sqlite-vec + post-filtering estricto.
+    Búsqueda semántica con pgvector + post-filtering estricto.
+
+    pgvector retorna candidatos ordenados por distancia coseno.
+    Python aplica filtros duros (precio, zona, booleanos) sobre esos
+    candidatos preservando el orden de similitud.
 
     Args:
         session: Sesión SQLAlchemy async.
         tenant_id: ID del tenant.
-        filters: Filtros para post-filtering.
-        limit: Máximo de resultados finales.
-        k_vec: Candidatos vectoriales antes de filtrar.
+        filters: Filtros estructurados extraídos del query.
+        limit: Máximo de resultados finales a retornar.
+        k_vec: Candidatos vectoriales a recuperar antes de filtrar.
 
     Returns:
-        SearchResult con propiedades o vacío con source apropiado.
+        SearchResult con propiedades ordenadas por similitud.
     """
-    if not _VEC_AVAILABLE:
-        return []
-
     start = time.perf_counter()
 
-    # Guard: query vacío no tiene sentido semántico
     if not filters.raw_query.strip():
         logger.warning("vec_search_empty_query", tenant_id=tenant_id)
-        return SearchResult(properties=[], source="sqlite_vec", total_found=0)
-
-    # 1. Verificar tabla vectorial
-    if not await _vector_table_exists(tenant_id):
-        logger.warning("vec_table_not_found", tenant_id=tenant_id)
         return SearchResult(
-            properties=[],
-            source="vec_unavailable",
-            total_found=0,
+            properties=[], source="vec_unavailable", total_found=0
         )
 
-    table_name = _get_vector_table_name(tenant_id)
-
-    # 2. Generar embedding
+    # 1. Generar embedding del query del usuario
     try:
-        query_embedding = await _generate_embedding(filters.raw_query)
-        embedding_blob = _embedding_to_blob(query_embedding)
+        query_embedding = await embed_text(filters.raw_query)
     except Exception as e:
         logger.error(
             "embedding_generation_failed",
@@ -244,55 +127,51 @@ async def search_properties_vec(
         )
         return SearchResult(properties=[], source="vec_error", total_found=0)
 
-    # 3. KNN search en sqlite-vec (thread pool — operación síncrona)
-    def _vec_search_sync():
-        with engine.sync_engine.connect() as conn:
-            result = conn.execute(
-                text(f"""
-                    SELECT property_id, distance
-                    FROM {table_name}
-                    WHERE embedding MATCH :embedding
-                    ORDER BY distance
-                    LIMIT :k
-                """),
-                {"embedding": embedding_blob, "k": k_vec},
-            )
-            return [(row.property_id, row.distance) for row in result.fetchall()]
-
+    # 2. KNN search con pgvector — ORDER BY cosine_distance retorna
+    #    propiedades ya ordenadas de más a menos similar al query.
     try:
-        vec_candidates = await asyncio.to_thread(_vec_search_sync)
+        stmt = (
+            select(Property)
+            .where(Property.tenant_id == tenant_id)
+            .where(Property.status == "disponible")
+            .where(Property.embedding.isnot(None))
+            .order_by(Property.embedding.cosine_distance(query_embedding))
+            .limit(k_vec)
+        )
+        result = await session.execute(stmt)
+        candidates = list(result.scalars().all())
     except Exception as e:
-        logger.error("vec_search_failed", table=table_name, error=str(e))
+        logger.error(
+            "vec_search_query_failed",
+            error=str(e),
+            tenant_id=tenant_id,
+        )
         return SearchResult(properties=[], source="vec_error", total_found=0)
 
-    if not vec_candidates:
-        return SearchResult(properties=[], source="sqlite_vec", total_found=0)
-
-    candidate_ids = [pid for pid, _ in vec_candidates]
-
-    # 4. Cargar propiedades completas desde SQLite
-    result = await session.execute(
-        select(Property).where(
-            Property.id.in_(candidate_ids),
-            Property.tenant_id == tenant_id,
-            Property.status == "disponible",
-        )
-    )
-    candidates = list(result.scalars().all())
-
-    # 5. Post-filtering estricto en Python
+    # 3. Post-filtering estricto + límite final
+    #    El orden de similitud queda preservado por la list comprehension.
     filtered = _apply_hard_filters(candidates, filters)
-
-    # 6. Re-ordenar por similitud + limitar
-    ordered = _reorder_by_similarity(filtered, candidate_ids)[:limit]
+    ordered = filtered[:limit]
 
     elapsed_ms = (time.perf_counter() - start) * 1000
+
+    if not ordered:
+        source = "no_results" if candidates else "vec_unavailable"
+        logger.info(
+            "vec_search_empty_result",
+            tenant_id=tenant_id,
+            query=filters.raw_query[:60],
+            candidates=len(candidates),
+            source=source,
+            elapsed_ms=round(elapsed_ms, 2),
+        )
+        return SearchResult(properties=[], source=source, total_found=0)
 
     logger.info(
         "vec_search_completed",
         tenant_id=tenant_id,
         query=filters.raw_query[:60],
-        candidates=len(candidate_ids),
+        candidates=len(candidates),
         after_filter=len(ordered),
         elapsed_ms=round(elapsed_ms, 2),
     )
@@ -302,7 +181,7 @@ async def search_properties_vec(
             PropertyChatSummary.model_validate(p).model_dump()
             for p in ordered
         ],
-        source="sqlite_vec",
+        source="vec",
         total_found=len(ordered),
         query_text=filters.raw_query,
     )
@@ -312,31 +191,15 @@ async def search_properties_vec(
 
 if __name__ == "__main__":
     import asyncio
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
     async def run_tests():
-        print("🔥 Smoke Tests — vec_search.py\n")
+        print("🔥 Smoke Tests — vec_search.py (pgvector)\n")
 
-        # Test 1: Nombre de tabla seguro
-        print("🧪 Test 1: Sanitización de tenant_id")
-        assert _get_vector_table_name("tenant-123") == "property_embeddings_tenant_123"
-        assert _get_vector_table_name("user@email.com") == "property_embeddings_user_email_com"
-        assert _get_vector_table_name("normal") == "property_embeddings_normal"
-        print("   ✅ Sanitización correcta")
-
-        # Test 2: Conversión a blob
-        print("\n🧪 Test 2: Embedding → blob")
-        import numpy as np
-        emb = np.array([1.0, 2.0, 3.0], dtype=np.float32)
-        blob = _embedding_to_blob(emb)
-        assert isinstance(blob, bytes)
-        assert len(blob) == 3 * 4
-        print("   ✅ Blob correcto (3 floats × 4 bytes)")
-
-        # Test 3: Post-filtering booleano
-        print("\n🧪 Test 3: Post-filtering booleano")
+        # Test 1: Post-filtering booleano
+        print("🧪 Test 1: Filtros booleanos")
         prop = MagicMock()
-        prop.price_usd = 200000
+        prop.price_usd = 200_000
         prop.bedrooms = 3
         prop.bathrooms = 2
         prop.area_m2 = 85
@@ -347,28 +210,41 @@ if __name__ == "__main__":
         prop.location_zone = "Pampatar"
         prop.tipo_especial = None
 
-        from src.app.schemas.search import FilterQuery
-
-        f_true = FilterQuery(vista_al_mar=True, raw_query="test")
-        assert len(_apply_hard_filters([prop], f_true)) == 1
-
+        f_true  = FilterQuery(vista_al_mar=True,  raw_query="test")
         f_false = FilterQuery(vista_al_mar=False, raw_query="test")
+        f_none  = FilterQuery(raw_query="test")
+
+        assert len(_apply_hard_filters([prop], f_true))  == 1
         assert len(_apply_hard_filters([prop], f_false)) == 0
+        assert len(_apply_hard_filters([prop], f_none))  == 1
+        print("   ✅ True/False/None correctos")
 
-        f_none = FilterQuery(raw_query="test")
-        assert len(_apply_hard_filters([prop], f_none)) == 1
-        print("   ✅ Filtros True/False/None correctos")
+        # Test 2: Filtros numéricos
+        print("\n🧪 Test 2: Filtros numéricos")
+        f_precio = FilterQuery(max_price_usd=150_000, raw_query="test")
+        assert len(_apply_hard_filters([prop], f_precio)) == 0  # 200k > 150k
 
-        # Test 4: Re-ordenamiento por similitud
-        print("\n🧪 Test 4: Re-ordenamiento por similitud")
-        props = [MagicMock(id="A"), MagicMock(id="B"), MagicMock(id="C")]
-        reordered = _reorder_by_similarity(
-            [props[0], props[2]],  # B fue filtrado
-            ["A", "B", "C"],       # orden vectorial original
+        f_ok = FilterQuery(max_price_usd=250_000, raw_query="test")
+        assert len(_apply_hard_filters([prop], f_ok)) == 1
+        print("   ✅ Precio máximo correcto")
+
+        # Test 3: Orden preservado post-filter
+        print("\n🧪 Test 3: Orden de similitud preservado")
+        p1, p2, p3 = MagicMock(id="A"), MagicMock(id="B"), MagicMock(id="C")
+        for p in [p1, p2, p3]:
+            p.price_usd = 100_000; p.bedrooms = 2; p.bathrooms = 1
+            p.area_m2 = 60; p.vista_al_mar = False; p.frente_playa = False
+            p.uso_vacacional = False; p.property_type = "venta"
+            p.location_zone = "Porlamar"; p.tipo_especial = None
+
+        # pgvector ya retorna [A, B, C] en orden — filtrar B
+        p2.price_usd = 999_999
+        result = _apply_hard_filters(
+            [p1, p2, p3],
+            FilterQuery(max_price_usd=200_000, raw_query="test")
         )
-        assert reordered[0].id == "A"
-        assert reordered[1].id == "C"
-        print("   ✅ Orden vectorial preservado post-filtrado")
+        assert [p.id for p in result] == ["A", "C"]
+        print("   ✅ Orden A→C preservado (B filtrado)")
 
         print("\n🎉 Todos los smoke tests pasaron ✅")
 
