@@ -76,6 +76,10 @@ class SearchSource(str, Enum):
     VEC = "vec"
     HYBRID = "hybrid"
     FALLBACK = "fallback"
+    VEC_UNAVAILABLE = "vec_unavailable"
+    VEC_ERROR = "vec_error"
+    NO_RESULTS = "no_results"
+    LLM_BLOCKED = "llm_blocked"
 
 
 class IngestionStatus(str, Enum):
