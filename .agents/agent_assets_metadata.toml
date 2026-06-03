@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "Ug9JhZ8HlrYHC6jrY5GAM"
+uri = "file://CAMBIOS_Y_MODIFICACIONES.md"
+type = "text"
+title = "Cambios y Modificaciones — Margarita AI Realty"

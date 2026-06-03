@@ -24,7 +24,7 @@ dependencies = [
 
     # ── LLM ───────────────────────────────────────────────────────
     "litellm>=1.55.0",                   # Gateway Groq + Gemini unificado
-    "sentence-transformers>=3.3.0",      # Embeddings locales (paraphrase-multilingual-MiniLM-L12-v2)
+    "sentence-transformers>=2.2.0",      # Embeddings locales (paraphrase-multilingual-MiniLM-L12-v2)
 
     # ── Notificaciones ────────────────────────────────────────────
     "aiosmtplib>=3.0.0",                 # SMTP async sin bloquear event loop
