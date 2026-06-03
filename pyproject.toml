@@ -24,7 +24,7 @@ dependencies = [
 
     # ── LLM ───────────────────────────────────────────────────────
     "litellm>=1.55.0",                   # Gateway Groq + Gemini unificado
-    "sentence-transformers>=2.2.0",      # Embeddings locales (paraphrase-multilingual-MiniLM-L12-v2)
+    "fastembed>=0.8.0",                  # Embeddings locales ONNX (sin PyTorch)
 
     # ── Notificaciones ────────────────────────────────────────────
     "aiosmtplib>=3.0.0",                 # SMTP async sin bloquear event loop
@@ -942,7 +942,7 @@ semantic-kernel = [{ index = "pytorch-cpu", marker = "platform_system == 'Linux'
 semantic-router = [{ index = "pytorch-cpu", marker = "platform_system == 'Linux'" }]
 senselab = [{ index = "pytorch-cpu", marker = "platform_system == 'Linux'" }]
 sent2vec = [{ index = "pytorch-cpu", marker = "platform_system == 'Linux'" }]
-sentence-transformers = [{ index = "pytorch-cpu", marker = "platform_system == 'Linux'" }]
+fastembed = []
 sequence-model-train = [{ index = "pytorch-cpu", marker = "platform_system == 'Linux'" }]
 serotiny = [{ index = "pytorch-cpu", marker = "platform_system == 'Linux'" }]
 sevenn = [{ index = "pytorch-cpu", marker = "platform_system == 'Linux'" }]
