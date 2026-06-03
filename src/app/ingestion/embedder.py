@@ -23,9 +23,9 @@ async def _get_model_async():
     if _model is None:
         async with _model_lock:
             if _model is None:  # double-check después del lock
-                from sentence_transformers import SentenceTransformer
+                from fastembed import TextEmbedding
                 _model = await asyncio.to_thread(
-                    SentenceTransformer, settings.embedding_model
+                    TextEmbedding, settings.embedding_model
                 )
     return _model
 
@@ -37,7 +37,7 @@ async def embed_text(text: str) -> list[float]:
     """
     model = await _get_model_async()
     embedding = await asyncio.to_thread(
-        model.encode, text, None, None, None, None, None, True  # convert_to_numpy=True
+        lambda: list(model.embed([text]))[0]
     )
     return embedding.tolist()
 
@@ -50,7 +50,7 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     """
     model = await _get_model_async()
     embeddings = await asyncio.to_thread(
-        model.encode, texts, None, None, None, None, None, True  # convert_to_numpy=True
+        lambda: list(model.embed(texts))
     )
     return [e.tolist() for e in embeddings]
 
