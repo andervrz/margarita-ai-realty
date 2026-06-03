@@ -21,6 +21,7 @@ dependencies = [
     "aiosqlite>=0.20.0",                 # Driver async SQLite
     "alembic>=1.14.0",                   # Migraciones versionadas
     "pgvector>=0.3.0",                 # Vector type para SQLAlchemy + PostgreSQL
+    "asyncpg>=0.29.0",                 # Driver async PostgreSQL para SQLAlchemy
     "sqlite-vec>=0.1.6",                 # Vector search nativo en SQLite
 
     # ── LLM ───────────────────────────────────────────────────────
