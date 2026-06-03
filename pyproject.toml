@@ -38,6 +38,7 @@ dependencies = [
     "google-auth-httplib2>=0.2.0",
 
     # ── Logging ───────────────────────────────────────────────────
+    "passlib[bcrypt]>=1.7.4",             # Hashing de API keys
     "structlog>=24.4.0",
 
     # ── CSV / Excel ───────────────────────────────────────────────
