@@ -9,8 +9,8 @@ from sqlalchemy import Float, CheckConstraint, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import Index, Boolean, func
 from pgvector.sqlalchemy import Vector
-from src.app.db.base import Base
-from src.app.core.constants import PropertyType, PropertyStatus
+from app.db.base import Base
+from app.core.constants import PropertyType, PropertyStatus
 
 class Property(Base):
     """Propiedad del catálogo de un tenant."""

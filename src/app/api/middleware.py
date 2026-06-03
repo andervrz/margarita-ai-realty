@@ -28,9 +28,9 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.core.security import hash_api_key
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.core.security import hash_api_key
 
 logger = get_logger(__name__)
 
@@ -153,8 +153,8 @@ async def _lookup_tenant(request: Request, key_hash: str) -> dict | None:
     """
     from sqlalchemy import select
 
-    from src.app.db.engine import AsyncSessionLocal
-    from src.app.db.models.tenant import Tenant
+    from app.db.engine import AsyncSessionLocal
+    from app.db.models.tenant import Tenant
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -330,7 +330,7 @@ if __name__ == "__main__":
     print("✅ _DEV_TENANT tiene estructura completa")
 
     # Test 2: hash_api_key es la función correcta (no hash_api_key_sha256)
-    from src.app.core.security import hash_api_key
+    from app.core.security import hash_api_key
     h1 = hash_api_key("test-key-123")
     h2 = hash_api_key("test-key-123")
     assert h1 == h2

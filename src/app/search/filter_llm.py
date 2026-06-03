@@ -18,10 +18,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.llm.client import chat_completion
-from src.app.schemas.search import FilterQuery
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.llm.client import chat_completion
+from app.schemas.search import FilterQuery
 
 logger = get_logger(__name__)
 

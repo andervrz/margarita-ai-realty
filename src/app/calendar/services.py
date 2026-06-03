@@ -22,13 +22,13 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
+from app.core.config import get_settings
+from app.core.logging import get_logger
 
 if TYPE_CHECKING:
-    from src.app.db.models.lead import Lead
-    from src.app.db.models.property import Property
-    from src.app.db.models.tenant import Tenant
+    from app.db.models.lead import Lead
+    from app.db.models.property import Property
+    from app.db.models.tenant import Tenant
 
 logger = get_logger(__name__)
 

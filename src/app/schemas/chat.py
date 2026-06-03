@@ -1,8 +1,8 @@
 # src/app/schemas/chat.py
 """Schemas Pydantic para Chat."""
-from src.app.core.constants import Language, QualificationStage, BookingStep
+from app.core.constants import Language, QualificationStage, BookingStep
 from pydantic import BaseModel, Field, ConfigDict
-from src.app.schemas.property import PropertyChatSummary
+from app.schemas.property import PropertyChatSummary
 
 
 

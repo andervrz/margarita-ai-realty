@@ -3,7 +3,7 @@
 import json
 from pydantic import field_validator
 from pydantic import BaseModel, ConfigDict, Field
-from src.app.core.constants import PropertyType, PropertyStatus
+from app.core.constants import PropertyType, PropertyStatus
 
 class PropertyCreate(BaseModel):
     """Datos para crear una propiedad (desde CSV o API)."""

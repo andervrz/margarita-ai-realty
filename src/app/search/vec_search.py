@@ -17,11 +17,11 @@ import time
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.logging import get_logger
-from src.app.db.models.property import Property
-from src.app.ingestion.embedder import embed_text
-from src.app.schemas.property import PropertyChatSummary
-from src.app.schemas.search import FilterQuery, SearchResult
+from app.core.logging import get_logger
+from app.db.models.property import Property
+from app.ingestion.embedder import embed_text
+from app.schemas.property import PropertyChatSummary
+from app.schemas.search import FilterQuery, SearchResult
 
 logger = get_logger(__name__)
 

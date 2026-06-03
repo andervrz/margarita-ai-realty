@@ -32,13 +32,13 @@ import json
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
-from src.app.api.middleware import get_current_tenant
-from src.app.core.logging import get_logger
-from src.app.db.engine import AsyncSessionLocal
-from src.app.db.models.ingestion_log import IngestionLog
-from src.app.ingestion.hasher import file_checksum
-from src.app.ingestion.parser import parse_properties_csv
-from src.app.ingestion.pipeline import IngestionPipeline
+from app.api.middleware import get_current_tenant
+from app.core.logging import get_logger
+from app.db.engine import AsyncSessionLocal
+from app.db.models.ingestion_log import IngestionLog
+from app.ingestion.hasher import file_checksum
+from app.ingestion.parser import parse_properties_csv
+from app.ingestion.pipeline import IngestionPipeline
 
 logger = get_logger(__name__)
 
@@ -358,7 +358,7 @@ if __name__ == "__main__":
     print("✅ _parse_errors maneja todos los casos")
 
     # Test 5: file_checksum importado correctamente
-    from src.app.ingestion.hasher import file_checksum
+    from app.ingestion.hasher import file_checksum
     data = b"test csv content para margarita"
     c1 = file_checksum(data)
     c2 = file_checksum(data)
@@ -368,12 +368,12 @@ if __name__ == "__main__":
     print("✅ file_checksum determinístico y correcto")
 
     # Test 6: parse_properties_csv importado correctamente
-    from src.app.ingestion.parser import parse_properties_csv
+    from app.ingestion.parser import parse_properties_csv
     assert callable(parse_properties_csv)
     print("✅ parse_properties_csv importado correctamente")
 
     # Test 7: IngestionPipeline importado correctamente
-    from src.app.ingestion.pipeline import IngestionPipeline
+    from app.ingestion.pipeline import IngestionPipeline
     pipeline = IngestionPipeline()
     assert hasattr(pipeline, "process_csv")
     import inspect
@@ -381,13 +381,13 @@ if __name__ == "__main__":
     print("✅ IngestionPipeline con process_csv async")
 
     # Test 8: IngestionLog importado correctamente
-    from src.app.db.models.ingestion_log import IngestionLog
+    from app.db.models.ingestion_log import IngestionLog
     assert hasattr(IngestionLog, "errors_list"), \
         "IngestionLog debe tener property errors_list"
     print("✅ IngestionLog con errors_list property")
 
     # Test 9: AsyncSessionLocal importado correctamente
-    from src.app.db.engine import AsyncSessionLocal
+    from app.db.engine import AsyncSessionLocal
     assert AsyncSessionLocal is not None
     print("✅ AsyncSessionLocal importado correctamente")
 

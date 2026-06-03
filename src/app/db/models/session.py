@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from sqlalchemy import ForeignKey, CheckConstraint, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import Index, Boolean
-from src.app.db.base import Base
-from src.app.core.constants import Language
+from app.db.base import Base
+from app.core.constants import Language
 
 class Session(Base):
     """Sesión de chat con estado de calificación y booking."""

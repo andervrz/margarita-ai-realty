@@ -39,12 +39,12 @@ from collections.abc import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.app.api.middleware import RateLimitMiddleware, TenantMiddleware
-from src.app.api.v1.router import api_v1_router
-from src.app.chat.memory import cleanup_expired_sessions
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger, setup_logging
-from src.app.exceptions import DomainError, domain_exception_handler
+from app.api.middleware import RateLimitMiddleware, TenantMiddleware
+from app.api.v1.router import api_v1_router
+from app.chat.memory import cleanup_expired_sessions
+from app.core.config import get_settings
+from app.core.logging import get_logger, setup_logging
+from app.exceptions import DomainError, domain_exception_handler
 
 logger = get_logger(__name__)
 
@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             pass
 
     # Disponer engine SQLAlchemy — cierra pool de conexiones
-    from src.app.db.engine import engine
+    from app.db.engine import engine
     await engine.dispose()
 
     logger.info("app_shutdown_complete")
@@ -119,7 +119,7 @@ async def _check_db_tables() -> None:
     Solo verifica en startup para detectar configuración incorrecta.
     """
     from sqlalchemy import text
-    from src.app.db.engine import engine
+    from app.db.engine import engine
 
     try:
         async with engine.connect() as conn:

@@ -22,11 +22,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.db.models.lead import Lead
-from src.app.schemas.lead import LeadCreate
-from src.app.core.constants import LeadStatus
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.db.models.lead import Lead
+from app.schemas.lead import LeadCreate
+from app.core.constants import LeadStatus
 
 logger = get_logger(__name__)
 

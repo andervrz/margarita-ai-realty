@@ -28,8 +28,8 @@ from collections.abc import AsyncGenerator
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
+from app.core.config import get_settings
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -76,7 +76,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     Para reads:
         result = await db.execute(select(...))
     """
-    from src.app.db.engine import AsyncSessionLocal
+    from app.db.engine import AsyncSessionLocal
 
     async with AsyncSessionLocal() as session:
         yield session

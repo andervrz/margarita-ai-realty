@@ -6,12 +6,12 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.db.models.ingestion_log import IngestionLog
-from src.app.db.models.property import Property
-from src.app.ingestion.embedder import embed_text, generate_raw_embed_text
-from src.app.ingestion.hasher import file_checksum, property_hash
-from src.app.ingestion.parser import parse_properties_csv
-from src.app.schemas.ingestion import IngestionResult, PropertyCSVRow
+from app.db.models.ingestion_log import IngestionLog
+from app.db.models.property import Property
+from app.ingestion.embedder import embed_text, generate_raw_embed_text
+from app.ingestion.hasher import file_checksum, property_hash
+from app.ingestion.parser import parse_properties_csv
+from app.schemas.ingestion import IngestionResult, PropertyCSVRow
 
 
 class IngestionPipeline:

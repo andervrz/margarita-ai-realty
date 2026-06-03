@@ -26,25 +26,25 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.chat.language import detect_language, should_switch_language
-from src.app.chat.memory import (
+from app.chat.language import detect_language, should_switch_language
+from app.chat.memory import (
     SessionMemory,
     build_context_messages,
     get_session_memory,
     save_session_memory,
     update_session_activity,
 )
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.db.models.message import Message
-from src.app.llm.client import LLMNoProviderAvailable, chat_completion
-from src.app.llm.prompt.booking import get_booking_prompt
-from src.app.llm.prompt.system_en import get_system_prompt_en
-from src.app.llm.prompt.system_es import get_system_prompt_es
-from src.app.llm.router import get_chat_model
-from src.app.qualification.score import QualificationResult, calculate_qualification_score
-from src.app.schemas.search import SearchResult
-from src.app.search.hybrid import hybrid_search
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.db.models.message import Message
+from app.llm.client import LLMNoProviderAvailable, chat_completion
+from app.llm.prompt.booking import get_booking_prompt
+from app.llm.prompt.system_en import get_system_prompt_en
+from app.llm.prompt.system_es import get_system_prompt_es
+from app.llm.router import get_chat_model
+from app.qualification.score import QualificationResult, calculate_qualification_score
+from app.schemas.search import SearchResult
+from app.search.hybrid import hybrid_search
 
 logger = get_logger(__name__)
 

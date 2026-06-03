@@ -28,11 +28,11 @@ import uuid
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from src.app.api.middleware import get_current_tenant
-from src.app.chat.engine import process_message
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.db.engine import AsyncSessionLocal
+from app.api.middleware import get_current_tenant
+from app.chat.engine import process_message
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.db.engine import AsyncSessionLocal
 
 logger = get_logger(__name__)
 
@@ -121,7 +121,7 @@ async def websocket_chat(
 
     # Saludo inicial si es sesión nueva — usamos DB para verificar
     async with AsyncSessionLocal() as session:
-        from src.app.chat.memory import get_session_memory
+        from app.chat.memory import get_session_memory
         memory = await get_session_memory(
             session=session,
             session_id=session_id,

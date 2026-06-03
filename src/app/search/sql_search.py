@@ -17,11 +17,11 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import BinaryExpression
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.db.models.property import Property
-from src.app.schemas.property import PropertyChatSummary
-from src.app.schemas.search import FilterQuery, SearchResult
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.db.models.property import Property
+from app.schemas.property import PropertyChatSummary
+from app.schemas.search import FilterQuery, SearchResult
 
 logger = get_logger(__name__)
 
@@ -196,8 +196,8 @@ async def search_properties_sql(
 if __name__ == "__main__":
     import asyncio
 
-    from src.app.db.base import Base
-    from src.app.db.engine import AsyncSessionLocal, engine
+    from app.db.base import Base
+    from app.db.engine import AsyncSessionLocal, engine
 
     async def run_tests():
         print("🔥 Smoke Tests — sql_search.py\n")

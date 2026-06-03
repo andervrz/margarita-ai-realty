@@ -2,8 +2,8 @@
 """Schemas Pydantic para búsqueda híbrida."""
 
 from pydantic import BaseModel, Field
-from src.app.schemas.property import PropertyChatSummary
-from src.app.core.constants import SearchSource
+from app.schemas.property import PropertyChatSummary
+from app.core.constants import SearchSource
 
 
 class FilterQuery(BaseModel):

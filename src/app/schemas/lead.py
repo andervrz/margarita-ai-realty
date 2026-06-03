@@ -6,7 +6,7 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from src.app.core.constants import LeadStatus
+from app.core.constants import LeadStatus
 
 
 class BookingData(BaseModel):

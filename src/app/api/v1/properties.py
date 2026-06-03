@@ -26,10 +26,10 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.app.api.middleware import get_current_tenant
-from src.app.core.logging import get_logger
-from src.app.db.engine import AsyncSessionLocal
-from src.app.db.models.property import Property
+from app.api.middleware import get_current_tenant
+from app.core.logging import get_logger
+from app.db.engine import AsyncSessionLocal
+from app.db.models.property import Property
 
 logger = get_logger(__name__)
 
@@ -100,8 +100,8 @@ async def search_properties(
     """
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from src.app.schemas.search import FilterQuery
-    from src.app.search.hybrid import hybrid_search
+    from app.schemas.search import FilterQuery
+    from app.search.hybrid import hybrid_search
 
     tenant_id = tenant["id"]
     logger.info("properties_search", tenant_id=tenant_id, query=q[:100])

@@ -1,7 +1,7 @@
 # src/app/schemas/ingestion.py
 """Schemas Pydantic para ingestion de CSV."""
 from pydantic import BaseModel, Field, field_validator
-from src.app.core.constants import IngestionStatus
+from app.core.constants import IngestionStatus
 
 
 class PropertyCSVRow(BaseModel):

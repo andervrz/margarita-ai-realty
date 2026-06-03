@@ -6,7 +6,7 @@ import io
 import json
 from typing import Any
 
-from src.app.schemas.ingestion import PropertyCSVRow
+from app.schemas.ingestion import PropertyCSVRow
 
 
 class CSVParseError(Exception):

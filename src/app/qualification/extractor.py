@@ -23,8 +23,8 @@ from typing import Any
 
 from dataclasses import dataclass, field
 
-from src.app.core.logging import get_logger
-from src.app.qualification.signals import (
+from app.core.logging import get_logger
+from app.qualification.signals import (
     SIGNALS,
     detect_signal,
     get_signal_points,

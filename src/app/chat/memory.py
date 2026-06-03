@@ -21,9 +21,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.logging import get_logger
-from src.app.db.models.message import Message
-from src.app.db.models.session import Session as SessionModel
+from app.core.logging import get_logger
+from app.db.models.message import Message
+from app.db.models.session import Session as SessionModel
 
 logger = get_logger(__name__)
 
@@ -61,7 +61,7 @@ class SessionMemory:
 
     def add_message(self, role: str, content: str, **extra: Any) -> None:
         """Agrega mensaje con cap de memoria para evitar crecimiento infinito."""
-        from src.app.core.config import get_settings
+        from app.core.config import get_settings
         settings = get_settings()
 
         self.touch()
@@ -97,7 +97,7 @@ async def get_session_memory(
       4. Si no existe → crear nueva
     """
     async with _session_locks[session_id]:
-        from src.app.core.config import get_settings
+        from app.core.config import get_settings
         settings = get_settings()
         now = datetime.now(timezone.utc)
 
@@ -199,7 +199,7 @@ def build_context_messages(
     - Mensajes anteriores con propiedades se compactan en referencia
     - El último mensaje assistant conserva contenido completo
     """
-    from src.app.core.config import get_settings
+    from app.core.config import get_settings
     settings = get_settings()
 
     limit = max_messages or settings.max_messages_in_context
@@ -243,7 +243,7 @@ async def cleanup_expired_sessions() -> None:
     Llamar desde lifespan de FastAPI como asyncio.create_task().
     """
     global _cleanup_running
-    from src.app.core.config import get_settings
+    from app.core.config import get_settings
 
     if _cleanup_running:
         logger.warning("cleanup_already_running")
@@ -306,7 +306,7 @@ async def _load_from_db(
     tenant_id: str,
 ) -> SessionMemory | None:
     """Restaura sesión y mensajes desde SQLite."""
-    from src.app.core.config import get_settings
+    from app.core.config import get_settings
     settings = get_settings()
 
     result = await session.execute(

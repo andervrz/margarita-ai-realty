@@ -21,13 +21,13 @@ from collections import defaultdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.schemas.search import FilterQuery, SearchResult
-from src.app.search.filter_extractor import extract_filters as extract_filters_regex
-from src.app.search.filter_llm import LLMFilterExtractionError, extract_filters_with_llm
-from src.app.search.sql_search import search_properties_sql
-from src.app.search.vec_search import search_properties_vec
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.schemas.search import FilterQuery, SearchResult
+from app.search.filter_extractor import extract_filters as extract_filters_regex
+from app.search.filter_llm import LLMFilterExtractionError, extract_filters_with_llm
+from app.search.sql_search import search_properties_sql
+from app.search.vec_search import search_properties_vec
 
 logger = get_logger(__name__)
 
@@ -325,7 +325,7 @@ if __name__ == "__main__":
 
         # Test 3: Sugerencias por idioma
         print("\n🧪 Test 3: Sugerencias contextualizadas")
-        from src.app.schemas.search import FilterQuery
+        from app.schemas.search import FilterQuery
 
         f_es = FilterQuery(zone="pampatar", max_price_usd=200000, raw_query="test")
         sugs_es = _generate_fallback_suggestions(f_es, "es")

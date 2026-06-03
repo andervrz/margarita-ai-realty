@@ -19,8 +19,8 @@ from typing import Any
 import litellm
 from litellm import acompletion
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
+from app.core.config import get_settings
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 

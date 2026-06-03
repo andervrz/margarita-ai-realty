@@ -26,8 +26,8 @@ from typing import Any
 from pydantic import BaseModel, EmailStr, field_validator, ValidationError, TypeAdapter
 from pydantic.fields import FieldInfo
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
+from app.core.config import get_settings
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 _email_adapter = TypeAdapter(EmailStr)

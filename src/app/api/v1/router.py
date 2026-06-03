@@ -9,7 +9,7 @@ Estructura:
     /api/v1/leads                 → Admin: leads
 
 Uso en main.py:
-    from src.app.api.v1.router import api_v1_router
+    from app.api.v1.router import api_v1_router
     app.include_router(api_v1_router, prefix="/api/v1")
 """
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from src.app.api.v1 import chat, ingestion, leads, properties
+from app.api.v1 import chat, ingestion, leads, properties
 
 # Router raíz de v1 — se monta en /api/v1 desde main.py
 api_v1_router = APIRouter()

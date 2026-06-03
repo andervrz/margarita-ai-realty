@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 
-from src.app.schemas.search import FilterQuery
+from app.schemas.search import FilterQuery
 
 
 # ── Zonas de Margarita ────────────────────────────────────────────

@@ -316,7 +316,7 @@ async def domain_exception_handler(request: Any, exc: DomainError) -> Any:
     """
     from fastapi.responses import JSONResponse
 
-    from src.app.core.logging import get_logger
+    from app.core.logging import get_logger
 
     log = get_logger(__name__)
     log.error(

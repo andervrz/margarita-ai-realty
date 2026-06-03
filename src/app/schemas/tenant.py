@@ -2,7 +2,7 @@
 """Schemas Pydantic para Tenant."""
 
 from pydantic import BaseModel, ConfigDict
-from src.app.core.constants import Plan
+from app.core.constants import Plan
 
 
 class TenantConfig(BaseModel):
