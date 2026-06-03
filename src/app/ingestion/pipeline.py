@@ -179,12 +179,11 @@ class IngestionPipeline:
                 tenant_id=tenant_id,
                 property_hash=new_hash,
                 raw_embed_text=raw_text,
+                embedding=embedding,
                 **{k: v for k, v in row_dict.items() if k != "tenant_id"},
             )
             session.add(new_prop)
             stats["inserted"] += 1
-        
-        # TODO: Actualizar sqlite-vec embeddings (Fase 2 completa)
 
 
 # ── Smoke Test ─────────────────────────────────────────────────────
