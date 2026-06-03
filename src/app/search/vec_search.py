@@ -28,6 +28,9 @@ from src.app.db.models.property import Property
 from src.app.schemas.property import PropertyChatSummary
 from src.app.schemas.search import FilterQuery, SearchResult
 
+import os as _os
+_VEC_AVAILABLE = not _os.environ.get("DATABASE_URL", "").startswith("postgresql")
+
 logger = get_logger(__name__)
 
 # ── Lazy Load Thread-Safe del Modelo ─────────────────────────────
@@ -209,6 +212,9 @@ async def search_properties_vec(
     Returns:
         SearchResult con propiedades o vacío con source apropiado.
     """
+    if not _VEC_AVAILABLE:
+        return []
+
     start = time.perf_counter()
 
     # Guard: query vacío no tiene sentido semántico
