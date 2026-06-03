@@ -3,10 +3,12 @@
 
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import Float, CheckConstraint, ForeignKey, Integer, String, Text, Numeric
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import Index, Boolean, func
+from pgvector.sqlalchemy import Vector
 from src.app.db.base import Base
 from src.app.core.constants import PropertyType, PropertyStatus
 
@@ -64,6 +66,7 @@ class Property(Base):
     description_es: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_embed_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(384), nullable=True)
     
     created_at: Mapped[str] = mapped_column(
         String, default=lambda: datetime.now(timezone.utc).isoformat()
