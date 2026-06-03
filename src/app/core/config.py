@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     database_url: str = Field(default="sqlite+aiosqlite:///./chatbot.db")
 
     # ── Embeddings (sentence-transformers) ────────────────
-    embedding_model: str = Field(default="paraphrase-multilingual-MiniLM-L12-v2")
+    embedding_model: str = Field(default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
     embedding_dims: int = Field(default=384)
 
     # ── LLM API Keys (desde .env únicamente) ──────────────
