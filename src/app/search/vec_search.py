@@ -47,11 +47,10 @@ async def _get_embedding_model_async():
             if _embedding_model is None:
                 settings = get_settings()
                 logger.info("loading_embedding_model", model=settings.embedding_model)
-                from sentence_transformers import SentenceTransformer
+                from fastembed import TextEmbedding
                 _embedding_model = await asyncio.to_thread(
-                    SentenceTransformer,
+                    TextEmbedding,
                     settings.embedding_model,
-                    device="cpu",
                 )
     return _embedding_model
 
@@ -62,7 +61,7 @@ async def _generate_embedding(query: str):
     settings = get_settings()
     model = await _get_embedding_model_async()
     embedding = await asyncio.to_thread(
-        lambda: model.encode(query, convert_to_numpy=True, normalize_embeddings=True)
+        lambda: list(model.embed([query]))[0]
     )
     if embedding.shape[-1] != settings.embedding_dims:
         raise ValueError(
