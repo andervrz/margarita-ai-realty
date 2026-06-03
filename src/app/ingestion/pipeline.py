@@ -170,6 +170,7 @@ class IngestionPipeline:
                     setattr(existing, key, value)
             existing.property_hash = new_hash
             existing.raw_embed_text = raw_text
+            existing.embedding = embedding
             existing.updated_at = datetime.now(timezone.utc).isoformat()
             stats["updated"] += 1
         else:
