@@ -30,17 +30,17 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Import via src.app.* so models register to the same Base as the app
-from src.app.db.base import Base  # noqa: E402
-from src.app.db.models.ingestion_log import IngestionLog  # noqa: E402, F401
-from src.app.db.models.lead import Lead  # noqa: E402, F401
-from src.app.db.models.message import Message  # noqa: E402, F401
-from src.app.db.models.property import Property  # noqa: E402, F401
-from src.app.db.models.session import Session  # noqa: E402, F401
-from src.app.db.models.tenant import Tenant  # noqa: E402, F401
+from app.db.base import Base  # noqa: E402
+from app.db.models.ingestion_log import IngestionLog  # noqa: E402, F401
+from app.db.models.lead import Lead  # noqa: E402, F401
+from app.db.models.message import Message  # noqa: E402, F401
+from app.db.models.property import Property  # noqa: E402, F401
+from app.db.models.session import Session  # noqa: E402, F401
+from app.db.models.tenant import Tenant  # noqa: E402, F401
 
 target_metadata = Base.metadata
 
-from src.app.core.config import get_settings  # noqa: E402
+from app.core.config import get_settings  # noqa: E402
 
 _settings = get_settings()
 
