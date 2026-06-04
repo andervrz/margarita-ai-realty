@@ -28,10 +28,11 @@ import uuid
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from app.api.middleware import get_current_tenant
+from app.api.middleware import _DEV_TENANT, _lookup_tenant, get_current_tenant
 from app.chat.engine import process_message
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.security import hash_api_key
 from app.db.engine import AsyncSessionLocal
 
 logger = get_logger(__name__)
@@ -104,18 +105,38 @@ class ChatResponseSchema(BaseModel):
 
 # ── WebSocket Endpoint ────────────────────────────────────────────
 
+async def _resolve_ws_tenant(websocket: WebSocket) -> dict | None:
+    """Resuelve el tenant para WebSocket.
+
+    El TenantMiddleware (HTTP) no corre en conexiones WS, así que la auth se
+    hace aquí. Dev: DEV_TENANT (sin auth). Prod: ?api_key= en el query string.
+    Devuelve None si no se puede autenticar (el endpoint cierra la conexión).
+    """
+    if get_settings().app_env == "development":
+        return _DEV_TENANT
+    api_key = websocket.query_params.get("api_key")
+    if not api_key:
+        return None
+    return await _lookup_tenant(websocket, hash_api_key(api_key))
+
+
 @router.websocket("/ws/chat/{session_id}")
 async def websocket_chat(
     websocket: WebSocket,
     session_id: str,
-    tenant: dict = Depends(get_current_tenant),
 ) -> None:
     """Endpoint WebSocket para chat en tiempo real.
 
     El cliente debe enviar JSON: {"message": "texto del usuario"}
     El server responde con JSON estructurado: {"type": "response", ...}
     Heartbeat: ping cada 30s, pong esperado en 10s.
+    En producción requiere ?api_key=<tenant key> en la URL.
     """
+    tenant = await _resolve_ws_tenant(websocket)
+    if tenant is None:
+        await websocket.close(code=1008)  # Policy Violation: sin/invalid api_key
+        return
+
     settings = get_settings()
     await manager.connect(session_id, websocket)
 

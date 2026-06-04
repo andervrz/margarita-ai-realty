@@ -220,6 +220,21 @@ def create_app() -> FastAPI:
         """Health check para load balancers y uptime monitors."""
         return {"status": "ok", "service": "margarita-ai-realty"}
 
+    # ── Demo estático ─────────────────────────────────────────────
+    # Sirve demo/index.html en /demo para probar la interfaz desde el navegador
+    # (incl. Web Preview de Cloud Shell). main.py está en src/app/, así que el
+    # directorio demo/ queda dos niveles arriba de src/.
+    from pathlib import Path
+    from fastapi.staticfiles import StaticFiles
+
+    _demo_dir = Path(__file__).resolve().parents[2] / "demo"
+    if _demo_dir.is_dir():
+        app.mount(
+            "/demo",
+            StaticFiles(directory=str(_demo_dir), html=True),
+            name="demo",
+        )
+
     return app
 
 
