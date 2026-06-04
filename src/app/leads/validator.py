@@ -20,13 +20,10 @@ from __future__ import annotations
 
 
 import re
-from datetime import date, datetime, time, timezone, timedelta
-from typing import Any
+from datetime import date, datetime, time, timedelta
 
 from pydantic import BaseModel, EmailStr, field_validator, ValidationError, TypeAdapter
-from pydantic.fields import FieldInfo
 
-from app.core.config import get_settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)

@@ -5,10 +5,8 @@ Todas las API keys, secrets y credenciales se leen del archivo .env.
 Nunca hardcodeadas. Validación en producción para variables críticas.
 """
 
-import os
-import re
 from functools import lru_cache
-from pydantic import Field, field_validator, ValidationError
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 

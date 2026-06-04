@@ -22,7 +22,6 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.models.lead import Lead
 from app.schemas.lead import LeadCreate
@@ -259,7 +258,7 @@ async def get_lead_stats(
 # ── Smoke Test ────────────────────────────────────────────────────
 if __name__ == "__main__":
     import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import MagicMock
     
     async def _test():
         print("🔥 Smoke Test — leads/service.py")

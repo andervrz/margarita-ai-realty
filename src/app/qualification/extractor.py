@@ -25,7 +25,6 @@ from dataclasses import dataclass, field
 
 from app.core.logging import get_logger
 from app.qualification.signals import (
-    SIGNALS,
     detect_signal,
     get_signal_points,
     MARGARITA_ZONES,

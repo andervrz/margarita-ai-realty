@@ -21,7 +21,6 @@ from collections import defaultdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.schemas.search import FilterQuery, SearchResult
 from app.search.filter_extractor import extract_filters as extract_filters_regex
@@ -300,7 +299,6 @@ def reset_circuit_breaker() -> None:
 
 if __name__ == "__main__":
     import asyncio
-    from unittest.mock import AsyncMock, patch
 
     async def run_tests():
         print("🔥 Smoke Tests — hybrid.py\n")

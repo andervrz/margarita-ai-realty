@@ -98,9 +98,7 @@ async def search_properties(
     Nota: Registrado ANTES de /{property_id} para que FastAPI
     no interprete la literal "search" como un property_id.
     """
-    from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.schemas.search import FilterQuery
     from app.search.hybrid import hybrid_search
 
     tenant_id = tenant["id"]
