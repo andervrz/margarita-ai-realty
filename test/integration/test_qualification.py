@@ -13,7 +13,7 @@ def _build_session_messages(*pairs: tuple[str, str]) -> list[dict]:
 
 def test_explore_stage_initial():
     """Historial mínimo → stage=explore."""
-    from app.qualification.scorer import calculate_qualification_score
+    from app.qualification.score import calculate_qualification_score
     msgs = _build_session_messages(
         ("user", "hola, qué propiedades tienen?"),
         ("assistant", "Bienvenido! Tenemos apartamentos y casas."),
@@ -25,7 +25,7 @@ def test_explore_stage_initial():
 
 def test_qualify_stage_with_budget_and_zone():
     """Budget + zona → stage=qualify (score 40-74)."""
-    from app.qualification.scorer import calculate_qualification_score
+    from app.qualification.score import calculate_qualification_score
     msgs = _build_session_messages(
         ("user", "tengo presupuesto de $200,000"),
         ("assistant", "Perfecto. ¿Qué zona prefieres?"),
@@ -39,7 +39,7 @@ def test_qualify_stage_with_budget_and_zone():
 
 def test_book_stage_all_signals():
     """Conversación completa con todas las señales → book."""
-    from app.qualification.scorer import calculate_qualification_score
+    from app.qualification.score import calculate_qualification_score
     msgs = _build_session_messages(
         ("user", "tengo $250,000 para invertir"),
         ("assistant", "¿Qué zona prefieres?"),
@@ -59,7 +59,7 @@ def test_book_stage_all_signals():
 
 def test_international_buyer_full_profile():
     """Señales de comprador internacional acumulan score correcto."""
-    from app.qualification.scorer import calculate_qualification_score
+    from app.qualification.score import calculate_qualification_score
     msgs = _build_session_messages(
         ("user", "soy venezolano viviendo en Miami, quiero invertir $300k en Margarita"),
         ("assistant", "Tenemos excelentes opciones para inversión."),

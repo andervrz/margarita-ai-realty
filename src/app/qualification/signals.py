@@ -106,7 +106,8 @@ SIGNALS: dict[str, SignalConfig] = {
         points=15,
         keywords_es=(
             "urgente", "pronto", "este mes", "inmediato", "ya",
-            "cuanto antes", "disponible", "mudarse", "mudanza",
+            "cuanto antes", "lo antes posible", "lo mas pronto",
+            "de inmediato", "esta semana", "disponible", "mudarse", "mudanza",
         ),
         keywords_en=(
             "urgent", "soon", "this month", "immediately", "asap",

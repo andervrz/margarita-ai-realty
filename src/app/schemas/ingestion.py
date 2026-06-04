@@ -43,7 +43,8 @@ class PropertyCSVRow(BaseModel):
 
 class IngestionResult(BaseModel):
     """Resultado del pipeline de ingestion."""
-    
+
+    ingestion_id: str | None = None  # id del IngestionLog persistido
     filename: str
     total_rows: int
     valid_rows: int

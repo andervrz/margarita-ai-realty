@@ -167,7 +167,7 @@ async def upload_csv(
     )
 
     return IngestionResponse(
-        ingestion_id=result.filename,  # pipeline retorna IngestionResult con filename
+        ingestion_id=result.ingestion_id,  # id real del IngestionLog persistido
         filename=result.filename,
         file_checksum=checksum,
         status=result.status,

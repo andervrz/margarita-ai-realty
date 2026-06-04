@@ -36,15 +36,24 @@ class IngestionPipeline:
                 IngestionLog.file_checksum == checksum,
             )
         )
-        if existing_log.scalar_one_or_none():
+        prior = existing_log.scalar_one_or_none()
+        if prior:
+            # Archivo idéntico ya procesado: no re-insertamos, pero parseamos
+            # para reportar cuántas filas se omitieron (skipped) en vez de 0.
+            try:
+                valid_rows, parse_errors = parse_properties_csv(file_content, filename)
+                n_valid, n_failed = len(valid_rows), len(parse_errors)
+            except Exception:
+                n_valid, n_failed = 0, 0
             return IngestionResult(
+                ingestion_id=prior.id,
                 filename=filename,
-                total_rows=0,
-                valid_rows=0,
+                total_rows=n_valid + n_failed,
+                valid_rows=n_valid,
                 inserted_rows=0,
                 updated_rows=0,
-                skipped_rows=0,
-                failed_rows=0,
+                skipped_rows=n_valid,
+                failed_rows=n_failed,
                 errors=[],
                 status="skipped",  # archivo idéntico ya procesado
             )
@@ -63,6 +72,7 @@ class IngestionPipeline:
             session.add(log)
             await session.commit()
             return IngestionResult(
+                ingestion_id=log.id,
                 filename=filename,
                 total_rows=0, valid_rows=0, inserted_rows=0,
                 updated_rows=0, skipped_rows=0, failed_rows=0,
@@ -104,8 +114,9 @@ class IngestionPipeline:
         )
         session.add(log)
         await session.commit()
-        
+
         return IngestionResult(
+            ingestion_id=log.id,
             filename=filename,
             total_rows=len(valid_rows) + len(parse_errors),
             valid_rows=len(valid_rows),

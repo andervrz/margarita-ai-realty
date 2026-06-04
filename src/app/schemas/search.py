@@ -47,11 +47,16 @@ class FilterQuery(BaseModel):
 
 class SearchResult(BaseModel):
     """Resultado de búsqueda híbrida."""
-    
+
     properties: list[PropertyChatSummary]
     source: SearchSource
     total_found: int
     query_text: str | None = None
+
+    @property
+    def is_empty(self) -> bool:
+        """True si la búsqueda no retornó propiedades."""
+        return not self.properties
 
 
 # ── Smoke Test ─────────────────────────────────────────────────────

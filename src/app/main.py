@@ -118,17 +118,16 @@ async def _check_db_tables() -> None:
     No crea tablas — eso es responsabilidad de Alembic.
     Solo verifica en startup para detectar configuración incorrecta.
     """
-    from sqlalchemy import text
+    from sqlalchemy import inspect
     from app.db.engine import engine
 
     try:
         async with engine.connect() as conn:
-            # Use information_schema which works on both SQLite and PostgreSQL
-            result = await conn.execute(
-                text("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name='tenants'")
+            # Inspector es agnóstico al dialecto (SQLite y PostgreSQL).
+            tables = await conn.run_sync(
+                lambda sync_conn: inspect(sync_conn).get_table_names()
             )
-            exists = result.scalar_one_or_none()
-            if not exists:
+            if "tenants" not in tables:
                 logger.warning(
                     "db_tables_not_found",
                     hint="Run: alembic upgrade head",

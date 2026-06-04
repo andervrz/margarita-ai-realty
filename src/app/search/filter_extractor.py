@@ -76,13 +76,17 @@ PROPERTY_TYPE_SYNONYMS: dict[str, str] = {
 
 # ── Patrones de Precio ────────────────────────────────────────────
 
+# El sufijo multiplicador (k|mil) debe quedar DENTRO del grupo de captura para que
+# _parse_price_number pueda aplicarlo. \b evita falsos positivos ("100 km" ≠ 100k).
+_NUM = r"([\d\.,]+(?:\s*(?:k|mil|usd|dólares)\b)?)"
+
 PRICE_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"entre\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?\s+(?:y|and|-)\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?", re.I), "range"),
-    (re.compile(r"(?:hasta|máximo|maximo|max|menos de|under|up to|below)\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd|dólares)?", re.I), "max"),
-    (re.compile(r"[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?\s*(?:máximo|maximo|max|o menos|or less)", re.I), "max"),
-    (re.compile(r"(?:desde|mínimo|minimo|min|más de|more than|over|above|from)\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd|dólares)?", re.I), "min"),
-    (re.compile(r"[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?\s*(?:mínimo|minimo|min|o más|or more)", re.I), "min"),
-    (re.compile(r"[\$]\s*([\d\.,]+)\s*(?:k|mil|usd|dólares)?\b", re.I), "exact"),
+    (re.compile(rf"entre\s*[\$]?\s*{_NUM}\s+(?:y|and|-)\s*[\$]?\s*{_NUM}", re.I), "range"),
+    (re.compile(rf"(?:hasta|máximo|maximo|max|menos de|under|up to|below)\s*[\$]?\s*{_NUM}", re.I), "max"),
+    (re.compile(rf"[\$]?\s*{_NUM}\s*(?:máximo|maximo|max|o menos|or less)", re.I), "max"),
+    (re.compile(rf"(?:desde|mínimo|minimo|min|más de|more than|over|above|from)\s*[\$]?\s*{_NUM}", re.I), "min"),
+    (re.compile(rf"[\$]?\s*{_NUM}\s*(?:mínimo|minimo|min|o más|or more)", re.I), "min"),
+    (re.compile(rf"[\$]\s*{_NUM}\b", re.I), "exact"),
 ]
 
 ROOM_PATTERNS = {
@@ -317,9 +321,11 @@ def _extract_boolean_flags(query_norm: str) -> dict[str, bool | None]:
     Extrae flags booleanos con lógica positivo/negativo.
 
     Reglas:
-    - keyword positivo Y NO negativo → True
-    - keyword negativo Y NO positivo → False
-    - ambos o ninguno → None (delegar a LLM)
+    - keyword negativo → False (precedencia: las frases negativas como
+      "sin vista al mar" contienen el positivo "vista al mar" como substring,
+      así que la negación debe ganar)
+    - keyword positivo y sin negativo → True
+    - ninguno → None (delegar a LLM)
     """
     result: dict[str, bool | None] = {}
 
@@ -327,10 +333,10 @@ def _extract_boolean_flags(query_norm: str) -> dict[str, bool | None]:
         positive = any(kw in query_norm for kw in keywords["positive"])
         negative = any(kw in query_norm for kw in keywords["negative"])
 
-        if positive and not negative:
-            result[flag_name] = True
-        elif negative and not positive:
+        if negative:
             result[flag_name] = False
+        elif positive:
+            result[flag_name] = True
         else:
             result[flag_name] = None
 

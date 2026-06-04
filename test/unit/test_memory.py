@@ -24,7 +24,7 @@ def test_touch_updates_last_active():
     from app.chat.memory import SessionMemory
     mem = SessionMemory(session_id="s1", tenant_id="t1")
     old = mem.last_active
-    import asyncio; asyncio.get_event_loop().run_until_complete(asyncio.sleep(0.01))
+    import time; time.sleep(0.01)
     mem.touch()
     assert mem.last_active >= old
 

@@ -19,31 +19,45 @@ def _make_tenant_obj(tenant_dict: dict):
 
 async def test_email_notification_sends(test_lead, test_tenant, test_property):
     """Email se envía con asunto y destinatario correctos."""
-    from app.notifications.email import send_booking_email
+    from app.notification.email import send_booking_email
 
     tenant_obj = _make_tenant_obj({
+        "id": "dev-tenant-001",
         "agent_email": "agente@test.com",
         "name": "Test Inmobiliaria",
     })
 
-    with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
+    # email.py usa aiosmtplib.SMTP(...) como context manager async, no aiosmtplib.send.
+    # También requiere smtp_user/smtp_password configurados (guard temprano).
+    from app.notification import email as email_mod
+
+    mock_smtp = AsyncMock()
+    mock_smtp.send_message = AsyncMock(return_value="250 OK")
+    mock_smtp_cm = MagicMock()
+    mock_smtp_cm.__aenter__ = AsyncMock(return_value=mock_smtp)
+    mock_smtp_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("aiosmtplib.SMTP", return_value=mock_smtp_cm), \
+         patch.object(email_mod.settings, "smtp_user", "bot@test.com"), \
+         patch.object(email_mod.settings, "smtp_password", "secret"):
         await send_booking_email(
             lead=test_lead,
             tenant=tenant_obj,
             prop=test_property,
         )
-        mock_send.assert_called_once()
-        call_args = mock_send.call_args
-        # El mensaje enviado debe ir al agente
-        message = call_args[0][0]
-        assert "agente@test.com" in str(message)
+
+    mock_smtp.send_message.assert_called_once()
+    # El mensaje enviado debe ir al agente
+    message = mock_smtp.send_message.call_args[0][0]
+    assert "agente@test.com" in str(message)
 
 
 async def test_whatsapp_notification_sends(test_lead, test_tenant, test_property):
     """WhatsApp payload correcto para Meta API."""
-    from app.notifications.whatsapp import send_booking_whatsapp
+    from app.notification.whatsapp import send_booking_whatsapp
 
     tenant_obj = _make_tenant_obj({
+        "id": "dev-tenant-001",
         "agent_whatsapp": "+584120000000",
         "whatsapp_phone_id": "123456789",
     })
@@ -75,9 +89,10 @@ async def test_whatsapp_notification_sends(test_lead, test_tenant, test_property
 
 async def test_dispatcher_sends_both(test_lead, test_tenant, test_property):
     """Dispatcher invoca WhatsApp y Email en paralelo."""
-    from app.notifications.dispatcher import dispatch_booking_notifications
+    from app.notification.dispatcher import dispatch_booking_notifications
 
     tenant_obj = _make_tenant_obj({
+        "id": "dev-tenant-001",
         "agent_email": "agente@test.com",
         "agent_whatsapp": "+584120000000",
         "whatsapp_phone_id": "123456789",
@@ -95,8 +110,8 @@ async def test_dispatcher_sends_both(test_lead, test_tenant, test_property):
     async def mock_email(*args, **kwargs):
         email_called.append(True)
 
-    with patch("app.notifications.dispatcher.send_booking_whatsapp", mock_whatsapp):
-        with patch("app.notifications.dispatcher.send_booking_email", mock_email):
+    with patch("app.notification.dispatcher.send_booking_whatsapp", mock_whatsapp):
+        with patch("app.notification.dispatcher.send_booking_email", mock_email):
             result = await dispatch_booking_notifications(
                 lead=test_lead,
                 tenant=tenant_obj,
@@ -111,9 +126,10 @@ async def test_dispatcher_email_continues_if_whatsapp_fails(
     test_lead, test_tenant, test_property
 ):
     """Fallo en WhatsApp no bloquea envío de email."""
-    from app.notifications.dispatcher import dispatch_booking_notifications
+    from app.notification.dispatcher import dispatch_booking_notifications
 
     tenant_obj = _make_tenant_obj({
+        "id": "dev-tenant-001",
         "agent_email": "agente@test.com",
         "agent_whatsapp": "+584120000000",
         "whatsapp_phone_id": "123456789",
@@ -130,8 +146,8 @@ async def test_dispatcher_email_continues_if_whatsapp_fails(
     async def mock_email(*args, **kwargs):
         email_called.append(True)
 
-    with patch("app.notifications.dispatcher.send_booking_whatsapp", mock_whatsapp_fail):
-        with patch("app.notifications.dispatcher.send_booking_email", mock_email):
+    with patch("app.notification.dispatcher.send_booking_whatsapp", mock_whatsapp_fail):
+        with patch("app.notification.dispatcher.send_booking_email", mock_email):
             # No debe lanzar excepción aunque WhatsApp falle
             result = await dispatch_booking_notifications(
                 lead=test_lead,

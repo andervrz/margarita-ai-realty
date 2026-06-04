@@ -36,7 +36,7 @@ from app.db.engine import AsyncSessionLocal
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/chat", tags=["chat"])
+router = APIRouter(tags=["chat"])
 
 
 # ── Connection Manager ────────────────────────────────────────────
@@ -258,7 +258,7 @@ async def _heartbeat(
 
 # ── POST Fallback Endpoint ────────────────────────────────────────
 
-@router.post("", response_model=ChatResponseSchema)
+@router.post("/chat", response_model=ChatResponseSchema)
 async def http_chat(
     request: Request,
     payload: ChatRequest,
