@@ -12,7 +12,7 @@ Jerarquía:
     │   ├── LLMTimeoutError      504 — timeout de provider
     │   └── LLMContentError      500 — respuesta malformada
     ├── SearchError
-    │   ├── VectorSearchError    500 — sqlite-vec falló
+    │   ├── VectorSearchError    500 — pgvector falló
     │   └── FilterError          400 — filtros inválidos
     ├── IngestionError
     │   ├── ParseError           400 — CSV malformado
@@ -145,7 +145,7 @@ class SearchError(DomainError):
 
 
 class VectorSearchError(SearchError):
-    """sqlite-vec falló o no está inicializado para el tenant."""
+    """pgvector falló o no está inicializado para el tenant."""
     status_code = 500
     default_detail = (
         "El servicio de búsqueda semántica no está disponible. "

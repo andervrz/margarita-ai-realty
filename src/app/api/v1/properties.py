@@ -3,7 +3,7 @@
 
 Endpoints:
     GET /properties          → Listar propiedades del tenant (con filtros)
-    GET /properties/search   → Búsqueda híbrida (SQL + sqlite-vec)
+    GET /properties/search   → Búsqueda híbrida (SQL + pgvector)
     GET /properties/{id}     → Ver detalle de una propiedad
 
 IMPORTANTE: /search debe estar ANTES de /{property_id} en el router
@@ -78,7 +78,7 @@ class PropertySearchResult(BaseModel):
     # Evitar alias="property" — property es builtin de Python
     # y causa conflictos en Pydantic v2 serialización
     prop: PropertyListItem
-    search_source: str = Field(..., description="sql | sqlite_vec | mixed | no_results")
+    search_source: str = Field(..., description="sql | vec | mixed | no_results")
     total_found: int = 0
 
 
@@ -90,7 +90,7 @@ async def search_properties(
     tenant: dict = Depends(get_current_tenant),
     limit: int = Query(3, ge=1, le=10),
 ) -> PropertySearchResult:
-    """Búsqueda híbrida SQL + sqlite-vec con lenguaje natural.
+    """Búsqueda híbrida SQL + pgvector con lenguaje natural.
 
     Ejemplo:
         GET /properties/search?q=apartamento+3+habitaciones+Pampatar+vista+al+mar

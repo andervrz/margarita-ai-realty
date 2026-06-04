@@ -1,5 +1,5 @@
 # src/app/ingestion/pipeline.py
-"""Pipeline completo: parse → hash → upsert SQLite → embed sqlite-vec."""
+"""Pipeline completo: parse → hash → upsert SQLite → embed pgvector."""
 
 import json
 from datetime import datetime, timezone

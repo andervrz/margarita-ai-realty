@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="")
     log_level: str = Field(default="INFO")
 
-    # ── Database (stack unificado SQLite + sqlite-vec) ────
+    # ── Database (SQLite (dev) o PostgreSQL + pgvector) ────
     database_url: str = Field(default="sqlite+aiosqlite:///./chatbot.db")
 
     # ── Embeddings (sentence-transformers) ────────────────

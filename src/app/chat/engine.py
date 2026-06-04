@@ -19,7 +19,7 @@ Principios:
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -68,6 +68,7 @@ class ChatResponse:
     properties_found: int
     duration_ms: float
     language: str
+    properties: list[dict] = field(default_factory=list)  # cards para el cliente
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +78,7 @@ class ChatResponse:
             "is_booking_active": self.is_booking_active,
             "booking_step": self.booking_step,
             "properties_found": self.properties_found,
+            "properties": self.properties,
             "duration_ms": self.duration_ms,
             "language": self.language,
         }
@@ -267,6 +269,10 @@ async def process_message(
         is_booking_active=memory.is_booking_active,
         booking_step=memory.booking_step,
         properties_found=search_result.total_found,
+        properties=[
+            p.model_dump() if hasattr(p, "model_dump") else p
+            for p in search_result.properties
+        ],
         duration_ms=round(duration_ms, 2),
         language=language,
     )

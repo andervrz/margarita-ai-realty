@@ -11,7 +11,7 @@ Flujo de upload:
     2. Server calcula SHA-256 del archivo (idempotencia)
     3. Si checksum ya existe → retorna ingestion anterior sin re-procesar
     4. Parsea CSV → valida con PropertyCSVRow → upsert en DB
-    5. Genera embeddings sqlite-vec para propiedades nuevas/actualizadas
+    5. Genera embeddings pgvector para propiedades nuevas/actualizadas
     6. Guarda IngestionLog con estadísticas completas
     7. Retorna resumen: inserted, updated, skipped, failed
 

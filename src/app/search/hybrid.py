@@ -5,11 +5,11 @@ Flujo:
   1. Capa 1:  Regex extractor (costo CERO)
   2. Capa 1b: LLM fallback (solo si regex vacío + circuit breaker permite)
   3. Capa 2:  SQL search (verdad estructural, prioridad máxima)
-  4. Capa 3:  sqlite-vec (solo si SQL vacío)
+  4. Capa 3:  pgvector (solo si SQL vacío)
   5. Capa 4:  Sin resultados → respuesta honesta con sugerencias
 
 Reglas de Oro:
-  - SQL con resultados → NO invocar sqlite-vec
+  - SQL con resultados → NO invocar pgvector
   - LLM nunca inventa propiedades — solo extrae filtros
   - Circuit breaker previene cascada de costos por queries ambiguos
 """
@@ -232,7 +232,7 @@ async def hybrid_search(
         )
         return sql_result
 
-    # ── Capa 3: sqlite-vec (fallback semántico) ───────────────────
+    # ── Capa 3: pgvector (fallback semántico) ───────────────────
     logger.info(
         "sql_empty_triggering_vec",
         tenant_id=tenant_id,

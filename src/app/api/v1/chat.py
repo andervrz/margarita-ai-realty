@@ -206,7 +206,7 @@ async def websocket_chat(
                 "type": "response",
                 "content": engine_response.text,
                 "session_id": session_id,
-                "properties": [],  # TODO: incluir cuando SearchResult exponga lista pública
+                "properties": engine_response.properties,
                 "qualification_score": engine_response.qualification_score,
                 "qualification_stage": engine_response.qualification_stage,
                 "is_booking_active": engine_response.is_booking_active,
@@ -299,6 +299,7 @@ async def http_chat(
         type="response",
         content=engine_response.text,
         session_id=session_id,
+        properties=engine_response.properties,
         qualification_score=engine_response.qualification_score,
         qualification_stage=engine_response.qualification_stage,
         is_booking_active=engine_response.is_booking_active,

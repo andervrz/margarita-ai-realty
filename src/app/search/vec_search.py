@@ -17,6 +17,7 @@ import time
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.models.property import Property
 from app.ingestion.embedder import embed_text
@@ -123,6 +124,18 @@ async def search_properties_vec(
         logger.error(
             "embedding_generation_failed",
             error=str(e),
+            query=filters.raw_query[:50],
+        )
+        return SearchResult(properties=[], source="vec_error", total_found=0)
+
+    # Validar dimensiones antes de tocar pgvector (un mismatch produciría un
+    # error críptico de la base de datos; aquí falla rápido y explícito).
+    expected_dims = get_settings().embedding_dims
+    if len(query_embedding) != expected_dims:
+        logger.error(
+            "embedding_dims_mismatch",
+            expected=expected_dims,
+            got=len(query_embedding),
             query=filters.raw_query[:50],
         )
         return SearchResult(properties=[], source="vec_error", total_found=0)

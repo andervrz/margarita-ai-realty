@@ -3,7 +3,7 @@
 
 Reglas de Oro:
   1. Siempre filtra por tenant_id + status='disponible'
-  2. Si retorna resultados → sqlite-vec NO se invoca
+  2. Si retorna resultados → pgvector NO se invoca
   3. Boolean flags manejan True/False/None explícitamente
   4. Costo CERO de LLM — SQL puro con índices
 """

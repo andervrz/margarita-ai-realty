@@ -301,16 +301,24 @@ def _extract_zone(query_norm: str) -> str | None:
     return None
 
 
+def _contains_word(text: str, term: str) -> bool:
+    """True si `term` aparece como palabra completa (no como substring).
+
+    Evita falsos positivos como "rent" dentro de "f**rent**e a la playa".
+    """
+    return re.search(rf"\b{re.escape(term)}\b", text) is not None
+
+
 def _extract_property_types(query_norm: str) -> list[str] | None:
     """Extrae tipos de propiedad, mapeando sinónimos a canónicos."""
     found: set[str] = set()
 
     for synonym, canonical in PROPERTY_TYPE_SYNONYMS.items():
-        if synonym in query_norm:
+        if _contains_word(query_norm, synonym):
             found.add(canonical)
 
     for ptype in PROPERTY_TYPES_CANONICAL:
-        if ptype in query_norm:
+        if _contains_word(query_norm, ptype):
             found.add(ptype)
 
     return sorted(list(found)) if found else None
