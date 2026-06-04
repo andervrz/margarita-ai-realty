@@ -359,6 +359,10 @@ def _format_properties_context(result: SearchResult) -> str:
     ]
 
     for idx, prop in enumerate(result.properties, start=1):
+        # result.properties puede contener modelos PropertyChatSummary (pydantic
+        # los coerciona) o dicts; normalizar a dict para el acceso .get().
+        if hasattr(prop, "model_dump"):
+            prop = prop.model_dump()
         title = prop.get("title", "Propiedad")
         line = f"{idx}. {title}"
 
