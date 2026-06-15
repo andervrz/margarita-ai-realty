@@ -61,6 +61,10 @@ def _passes_boolean_filters(prop: Property, filters: FilterQuery) -> bool:
 def _passes_text_filters(prop: Property, filters: FilterQuery) -> bool:
     if filters.property_type and prop.property_type not in filters.property_type:
         return False
+    if filters.dwelling_type:
+        haystack = f"{prop.title or ''} {prop.tipo_especial or ''}".lower()
+        if not any(d.lower() in haystack for d in filters.dwelling_type):
+            return False
     if filters.zone and filters.zone.lower() not in (prop.location_zone or "").lower():
         return False
     if filters.tipo_especial and prop.tipo_especial != filters.tipo_especial:

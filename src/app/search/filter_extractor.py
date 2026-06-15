@@ -48,12 +48,26 @@ MARGARITA_ZONES_NORMALIZED = [_normalize_zone(z) for z in MARGARITA_ZONES_CANONI
 
 
 # ── Tipos de Propiedad ────────────────────────────────────────────
+# Dos conceptos distintos que ANTES se mezclaban en property_type:
+#   - OPERATION_TYPES: tipo de operación/categoría. Se guarda en la columna
+#     Property.property_type (CheckConstraint la limita a estos valores).
+#   - DWELLING_TYPES: tipo de vivienda. NO existe como columna estructurada;
+#     vive en el título/descripción, así que se matchea por texto (ILIKE).
 
-PROPERTY_TYPES_CANONICAL = [
+OPERATION_TYPES_CANONICAL = [
     "venta", "arriendo", "vacacional", "local",
     "posada", "hotel", "planos", "terreno",
-    "apartamento", "casa", "villa", "townhouse",
 ]
+
+DWELLING_TYPES_CANONICAL = [
+    "apartamento", "casa", "villa", "townhouse", "penthouse",
+]
+
+# Unión — usada para escanear el query (sinónimos + canónicos).
+PROPERTY_TYPES_CANONICAL = OPERATION_TYPES_CANONICAL + DWELLING_TYPES_CANONICAL
+
+_OPERATION_TYPES_SET = set(OPERATION_TYPES_CANONICAL)
+_DWELLING_TYPES_SET = set(DWELLING_TYPES_CANONICAL)
 
 PROPERTY_TYPE_SYNONYMS: dict[str, str] = {
     "alquiler": "arriendo",
@@ -61,6 +75,8 @@ PROPERTY_TYPE_SYNONYMS: dict[str, str] = {
     "rent": "arriendo",
     "apto": "apartamento",
     "depto": "apartamento",
+    "ph": "penthouse",
+    "pent-house": "penthouse",
     "comercial": "local",
     "locales": "local",
     "oficina": "local",
@@ -72,6 +88,24 @@ PROPERTY_TYPE_SYNONYMS: dict[str, str] = {
     "preconstruction": "planos",
     "off-plan": "planos",
 }
+
+
+def split_property_terms(
+    terms: list[str] | None,
+) -> tuple[list[str] | None, list[str] | None]:
+    """Separa términos en (operaciones, viviendas).
+
+    Fuente de verdad compartida por el extractor regex y el LLM. Los términos
+    desconocidos se ignoran (no se fuerzan a ninguna de las dos columnas).
+
+    Returns:
+        (property_type, dwelling_type) — cada uno ordenado o None si vacío.
+    """
+    if not terms:
+        return None, None
+    operations = sorted({t for t in terms if t in _OPERATION_TYPES_SET})
+    dwellings = sorted({t for t in terms if t in _DWELLING_TYPES_SET})
+    return (operations or None), (dwellings or None)
 
 
 # ── Patrones de Precio ────────────────────────────────────────────
@@ -373,11 +407,14 @@ def extract_filters(query: str) -> FilterQuery:
     bedrooms, bathrooms = _extract_rooms(query_norm)
     area_min = _extract_area(query_norm)
     zone = _extract_zone(query_norm)
-    property_types = _extract_property_types(query_norm)
+    property_types, dwelling_types = split_property_terms(
+        _extract_property_types(query_norm)
+    )
     flags = _extract_boolean_flags(query_norm)
 
     return FilterQuery(
         property_type=property_types,
+        dwelling_type=dwelling_types,
         zone=zone,
         min_price_usd=min_price,
         max_price_usd=max_price,

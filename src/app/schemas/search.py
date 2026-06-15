@@ -9,7 +9,8 @@ from app.core.constants import SearchSource
 class FilterQuery(BaseModel):
     """Filtros estructurales extraídos del texto del usuario."""
     
-    property_type: list[str] | None = None
+    property_type: list[str] | None = None  # operación: venta/arriendo/...
+    dwelling_type: list[str] | None = None   # vivienda: apartamento/casa/...
     zone: str | None = None
     min_price_usd: float | None = None
     max_price_usd: float | None = None
@@ -34,7 +35,7 @@ class FilterQuery(BaseModel):
         """True si no hay filtros estructurales extraídos."""
         return all(
             v is None for v in [
-                self.property_type, self.zone,
+                self.property_type, self.dwelling_type, self.zone,
                 self.min_price_usd, self.max_price_usd,
                 self.min_price_bs, self.max_price_bs,
                 self.bedrooms_min, self.bathrooms_min,

@@ -106,8 +106,9 @@ def _generate_fallback_suggestions(
             if language == "es"
             else f"Options under ${filters.max_price_usd:,.0f}"
         )
-    if filters.property_type:
-        type_label = filters.property_type[0]
+    type_terms = filters.dwelling_type or filters.property_type
+    if type_terms:
+        type_label = type_terms[0]
         suggestions.append(
             f"{type_label.title()}s disponibles"
             if language == "es"
