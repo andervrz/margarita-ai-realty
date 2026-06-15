@@ -84,6 +84,65 @@ async def create_lead(
     return lead
 
 
+async def create_lead_from_booking(
+    session: AsyncSession,
+    *,
+    session_id: str,
+    tenant_id: str,
+    name: str,
+    email: str,
+    phone: str,
+    preferred_date: str = "Por confirmar",
+    preferred_time: str = "Por confirmar",
+    visit_duration_minutes: int = 60,
+    property_id: str | None = None,
+    qualification_score: int | None = None,
+    is_international: bool = False,
+    notes: str | None = None,
+) -> Lead:
+    """Crea un lead desde el booking conversacional simplificado.
+
+    A diferencia de create_lead(), NO exige fecha/hora válidas: en el flujo
+    simplificado la fecha es opcional ('Por confirmar') y no se pide hora.
+    El nombre/email/teléfono ya vienen validados desde el engine.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    lead = Lead(
+        session_id=session_id,
+        tenant_id=tenant_id,
+        property_id=property_id,
+        name=name,
+        email=email,
+        phone=phone,
+        preferred_date=preferred_date,
+        preferred_time=preferred_time,
+        visit_duration_minutes=visit_duration_minutes,
+        notes=notes,
+        qualification_score=qualification_score,
+        is_international=is_international,
+        status=LeadStatus.PENDIENTE.value,
+        created_at=now,
+        updated_at=now,
+    )
+
+    session.add(lead)
+    await session.commit()
+    await session.refresh(lead)
+
+    logger.info(
+        "lead_created_from_booking",
+        lead_id=str(lead.id),
+        tenant_id=tenant_id,
+        session_id=session_id,
+        name=name,
+        property_id=property_id,
+        score=qualification_score,
+    )
+
+    return lead
+
+
 async def get_lead_by_id(
     session: AsyncSession,
     lead_id: str,

@@ -73,20 +73,35 @@ class PropertyResponse(BaseModel):
 
 
 class PropertyChatSummary(BaseModel):
-    """Propiedad resumida para respuesta del chat — campos mínimos para el widget."""
+    """Propiedad para respuesta del chat.
+
+    Incluye campos para dos vistas:
+      - Listado (bullets): title, property_type, location_zone, price_usd.
+      - Detalle (al elegir): bedrooms, bathrooms, area_m2, parking_spots,
+        capacidad_huespedes, amenities, description_es/en.
+    """
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     title: str
     property_type: PropertyType
     price_usd: float | None = None
+    location_city: str | None = None
     location_zone: str | None = None
     bedrooms: int | None = None
+    bathrooms: int | None = None
+    area_m2: float | None = None
+    parking_spots: int | None = None
+    capacidad_huespedes: int | None = None
     vista_al_mar: bool = False
     frente_playa: bool = False
+    uso_vacacional: bool = False
+    tipo_especial: str | None = None
     status: PropertyStatus
-    
+
     amenities: list[str] | None = None
+    description_es: str | None = None
+    description_en: str | None = None
 
     @field_validator("amenities", mode="before")
     @classmethod

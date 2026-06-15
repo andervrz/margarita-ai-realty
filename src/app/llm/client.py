@@ -152,6 +152,10 @@ async def chat_completion(
                 last_error = LLMTimeoutError(
                     provider_model, f"timeout after {effective_timeout}s"
                 )
+                # Blip transitorio de conexión/red: backoff corto antes de
+                # reintentar el mismo provider (en vez de reintentar al instante).
+                if attempt < retry_count:
+                    await asyncio.sleep(0.5 * (attempt + 1))  # 0.5s, 1s
 
             except litellm.RateLimitError as exc:
                 logger.warning(
@@ -191,6 +195,11 @@ async def chat_completion(
                     error=str(exc),
                 )
                 last_error = LLMProviderError(provider_model, str(exc))
+                # litellm.Timeout/APIConnectionError suelen llegar aquí y a veces
+                # fallan al instante (conexión rechazada). Backoff corto da margen
+                # al blip antes de reintentar / pasar al fallback.
+                if attempt < retry_count:
+                    await asyncio.sleep(0.5 * (attempt + 1))  # 0.5s, 1s
 
         # Provider agotó sus intentos
         if not is_last_provider:
@@ -226,7 +235,7 @@ def _get_default_model(settings: Any) -> str:
     if settings.groq_api_key:
         return "groq/llama-3.3-70b-versatile"
     if settings.gemini_api_key:
-        return "gemini/gemini-2.5-pro"
+        return "gemini/gemini-2.5-flash"
     # Fallback final — fallará en runtime si no hay key, pero al menos es predecible
     return "groq/llama-3.3-70b-versatile"
 
@@ -237,7 +246,7 @@ def _build_provider_chain(primary_model: str, settings: Any) -> list[str]:
 
     # Groq como primary → Gemini como fallback
     if primary_model.startswith("groq/") and settings.gemini_api_key:
-        chain.append("gemini/gemini-2.5-pro")
+        chain.append("gemini/gemini-2.5-flash")
 
     # Gemini como primary → Groq como fallback
     elif primary_model.startswith("gemini/") and settings.groq_api_key:
@@ -279,7 +288,7 @@ if __name__ == "__main__":
 
         # Test 3: _get_default_model fallback a Gemini
         s_gemini = SimpleNamespace(groq_api_key="", gemini_api_key="key")
-        assert _get_default_model(s_gemini) == "gemini/gemini-2.5-pro"
+        assert _get_default_model(s_gemini) == "gemini/gemini-2.5-flash"
         print("✅ Default model: Gemini cuando solo hay GEMINI_API_KEY")
 
         # Test 4: Provider chain Groq → Gemini
@@ -291,7 +300,7 @@ if __name__ == "__main__":
         print("✅ Provider chain: Groq → Gemini")
 
         # Test 5: Provider chain Gemini → Groq
-        chain2 = _build_provider_chain("gemini/gemini-2.5-pro", s_both)
+        chain2 = _build_provider_chain("gemini/gemini-2.5-flash", s_both)
         assert len(chain2) == 2
         assert chain2[0].startswith("gemini/")
         assert chain2[1].startswith("groq/")

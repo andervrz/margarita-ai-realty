@@ -343,16 +343,29 @@ def _contains_word(text: str, term: str) -> bool:
     return re.search(rf"\b{re.escape(term)}\b", text) is not None
 
 
+def _contains_word_plural(text: str, term: str) -> bool:
+    """Como _contains_word pero tolera el plural español del término.
+
+    "casa"→"casas", "apartamento"→"apartamentos", "local"→"locales",
+    "hotel"→"hoteles", "terreno"→"terrenos". El sufijo opcional (?:e?s)?
+    cubre tanto -s como -es sin abrir falsos positivos (mantiene \\b).
+    """
+    return re.search(rf"\b{re.escape(term)}(?:e?s)?\b", text) is not None
+
+
 def _extract_property_types(query_norm: str) -> list[str] | None:
-    """Extrae tipos de propiedad, mapeando sinónimos a canónicos."""
+    """Extrae tipos de propiedad, mapeando sinónimos a canónicos.
+
+    Tolerante a plural ("casas", "apartamentos") — la forma más natural de pedir.
+    """
     found: set[str] = set()
 
     for synonym, canonical in PROPERTY_TYPE_SYNONYMS.items():
-        if _contains_word(query_norm, synonym):
+        if _contains_word_plural(query_norm, synonym):
             found.add(canonical)
 
     for ptype in PROPERTY_TYPES_CANONICAL:
-        if _contains_word(query_norm, ptype):
+        if _contains_word_plural(query_norm, ptype):
             found.add(ptype)
 
     return sorted(list(found)) if found else None

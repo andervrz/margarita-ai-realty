@@ -87,6 +87,26 @@ def _enrich_result(
     )
 
 
+# Frases con las que el usuario pide ver/explorar el catálogo sin dar filtros.
+# Solo en estos casos una query "sin filtros" debe devolver el top-N por defecto.
+_BROWSE_INTENT = (
+    # ES
+    "ver propiedad", "ver propiedades", "muestrame", "muéstrame", "muestra",
+    "mostrar", "que tienes", "qué tienes", "que hay", "qué hay", "todas",
+    "todo", "opciones", "mas opciones", "más opciones", "otras opciones",
+    "disponible", "disponibles", "catalogo", "catálogo", "lista", "listado",
+    # EN
+    "show", "see propert", "what do you have", "all propert", "options",
+    "more options", "available", "list", "browse", "anything",
+)
+
+
+def _has_browse_intent(text: str) -> bool:
+    """True si el usuario pide explorar el catálogo (sin filtros concretos)."""
+    low = text.lower()
+    return any(kw in low for kw in _BROWSE_INTENT)
+
+
 def _generate_fallback_suggestions(
     filters: FilterQuery,
     language: str,
@@ -208,6 +228,23 @@ async def hybrid_search(
             if v is not None and k not in ("raw_query", "extracted_by")
         },
     )
+
+    # ── Gate: sin filtros y sin intención de explorar ─────────────
+    # Evita el "top-3 por defecto" en mensajes intrascendentes (un nombre, un
+    # "no estoy seguro", un follow-up sin criterios) que ensuciaba el foco.
+    # "Ver propiedades" / "muéstrame todo" / "más opciones" sí pasan.
+    if filters.is_empty and not _has_browse_intent(user_query):
+        logger.info(
+            "no_filters_no_browse",
+            session_id=session_id,
+            query=user_query[:80],
+        )
+        return SearchResult(
+            properties=[],
+            source="no_results",
+            total_found=0,
+            query_text=user_query,
+        )
 
     # ── Capa 2: SQL (verdad estructural) ──────────────────────────
     sql_start = time.perf_counter()

@@ -96,6 +96,7 @@ class ChatResponseSchema(BaseModel):
     content: str
     session_id: str
     properties: list[dict] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
     qualification_score: int = Field(default=0)
     qualification_stage: str = Field(default="explore")
     booking_step: str | None = Field(default=None)
@@ -162,6 +163,7 @@ async def websocket_chat(
             "booking_step": None,
             "language": "es",
             "properties": [],
+            "suggestions": ["🏠 Comprar", "🔑 Alquilar", "Ver propiedades"],
         })
 
     heartbeat_task: asyncio.Task | None = None
@@ -228,6 +230,7 @@ async def websocket_chat(
                 "content": engine_response.text,
                 "session_id": session_id,
                 "properties": engine_response.properties,
+                "suggestions": engine_response.suggestions,
                 "qualification_score": engine_response.qualification_score,
                 "qualification_stage": engine_response.qualification_stage,
                 "is_booking_active": engine_response.is_booking_active,
@@ -321,6 +324,7 @@ async def http_chat(
         content=engine_response.text,
         session_id=session_id,
         properties=engine_response.properties,
+        suggestions=engine_response.suggestions,
         qualification_score=engine_response.qualification_score,
         qualification_stage=engine_response.qualification_stage,
         is_booking_active=engine_response.is_booking_active,
@@ -334,16 +338,19 @@ async def http_chat(
 def _build_greeting(tenant: dict, language: str = "es") -> str:
     """Construye saludo inicial personalizado."""
     name = tenant.get("name", "nuestro asistente")
+    # Evitar "...Margarita en Margarita": solo añadir la ubicación si el
+    # nombre del tenant no la menciona ya.
+    mentions_location = "margarita" in name.lower()
     if language == "en":
+        location = "" if mentions_location else " in Margarita"
         return (
-            f"Hello! I'm the virtual assistant for {name}. 🏝️\n\n"
-            f"What type of property are you looking for in Margarita? "
-            f"I can help you find apartments, houses, commercial spaces or land."
+            f"Hello! I'm the virtual assistant for {name}{location}. 🏝️\n\n"
+            f"To get started — are you looking to buy or rent?"
         )
+    location = "" if mentions_location else " en Margarita"
     return (
-        f"¡Hola! Soy el asistente virtual de {name}. 🏝️\n\n"
-        f"¿Qué tipo de propiedad estás buscando en Margarita? "
-        f"Puedo ayudarte a encontrar apartamentos, casas, locales o terrenos."
+        f"¡Hola! Soy el asistente virtual de {name}{location}. 🏝️\n\n"
+        f"Para empezar — ¿estás buscando comprar o alquilar?"
     )
 
 

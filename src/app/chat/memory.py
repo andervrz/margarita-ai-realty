@@ -48,6 +48,13 @@ class SessionMemory:
     qualification_score: int = 0
     is_booking_active: bool = False
     booking_step: str | None = None
+    # Datos capturados durante el flujo de booking (name, phone, email,
+    # preferred_date). Se vacía al persistir el lead. RAM-only en V1.
+    booking_data: dict[str, Any] = field(default_factory=dict)
+    # Propiedades mostradas más recientemente (en foco). Permite que los
+    # follow-ups sin términos de búsqueda ("me gusta la de $400", "agendar
+    # visita") sigan teniendo contexto del catálogo. RAM-only en V1.
+    last_properties: list[dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
