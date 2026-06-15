@@ -59,6 +59,9 @@ cover/
 # Notas de progreso locales (no versionar)
 pogress.md
 
+# Credenciales de Logfire (auth/proyecto — contienen token)
+.logfire/
+
 # Translations
 *.mo
 *.pot

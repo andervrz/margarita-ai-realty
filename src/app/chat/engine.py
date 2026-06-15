@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+import logfire
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -164,21 +165,27 @@ async def process_message(
     update_session_activity(memory)
 
     # ── 4. Hybrid Search ───────────────────────────────────────
-    try:
-        search_result: SearchResult = await hybrid_search(
-            session=session,
-            tenant_id=tenant_id,
-            user_query=user_message,
-            session_id=session_id,
-            language=language,
-            max_results=settings.max_properties_per_response,  # campo correcto de Settings
-        )
-    except Exception as exc:
-        logger.exception("hybrid_search_failed", session_id=session_id, error=str(exc))
-        search_result = SearchResult(
-            properties=[],
-            source="search_error",
-            total_found=0,
+    with logfire.span("chat.hybrid_search", session_id=session_id, query=user_message):
+        try:
+            search_result: SearchResult = await hybrid_search(
+                session=session,
+                tenant_id=tenant_id,
+                user_query=user_message,
+                session_id=session_id,
+                language=language,
+                max_results=settings.max_properties_per_response,  # campo correcto de Settings
+            )
+        except Exception as exc:
+            logger.exception("hybrid_search_failed", session_id=session_id, error=str(exc))
+            search_result = SearchResult(
+                properties=[],
+                source="search_error",
+                total_found=0,
+            )
+        logfire.info(
+            "search_result",
+            source=str(search_result.source),
+            properties_found=search_result.total_found,
         )
 
     # ── 5. Build LLM Context ───────────────────────────────────
@@ -193,11 +200,12 @@ async def process_message(
     # ── 6. LLM Call ────────────────────────────────────────────
     try:
         model = get_chat_model(tenant_plan="pro")
-        response_text = await chat_completion(
-            messages=llm_messages,
-            model=model,
-            timeout=settings.llm_timeout,
-        )
+        with logfire.span("chat.llm_completion", model=model, language=language):
+            response_text = await chat_completion(
+                messages=llm_messages,
+                model=model,
+                timeout=settings.llm_timeout,
+            )
     except LLMNoProviderAvailable:
         logger.error("llm_provider_unavailable", session_id=session_id)
         response_text = _get_fallback_response(language, "llm_unavailable")

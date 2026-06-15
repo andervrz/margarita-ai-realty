@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="")
     log_level: str = Field(default="INFO")
 
+    # ── Observabilidad (Pydantic Logfire) ─────────────────
+    # Sin token: no envía a la nube (no rompe dev/tests). Con token: trazas
+    # completas en logfire. logfire_console muestra los spans en consola local.
+    logfire_token: str = Field(default="")
+    logfire_console: bool = Field(default=False)
+    logfire_service_name: str = Field(default="margarita-ai-realty")
+
     # ── Database (SQLite (dev) o PostgreSQL + pgvector) ────
     database_url: str = Field(default="sqlite+aiosqlite:///./chatbot.db")
 

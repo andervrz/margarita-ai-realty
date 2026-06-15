@@ -44,6 +44,7 @@ from app.api.v1.router import api_v1_router
 from app.chat.memory import cleanup_expired_sessions
 from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
+from app.core.observability import configure_observability
 from app.exceptions import DomainError, domain_exception_handler
 
 logger = get_logger(__name__)
@@ -234,6 +235,11 @@ def create_app() -> FastAPI:
             StaticFiles(directory=str(_demo_dir), html=True),
             name="demo",
         )
+
+    # ── Observabilidad (Logfire) ──────────────────────────────────
+    # Configura + instrumenta FastAPI/httpx/SQLAlchemy/asyncpg. Token-opcional:
+    # sin LOGFIRE_TOKEN no exporta a la nube (no rompe dev/tests).
+    configure_observability(app)
 
     return app
 
