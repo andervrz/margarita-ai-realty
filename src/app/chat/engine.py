@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import logfire
@@ -33,7 +33,6 @@ from app.chat.memory import (
     build_context_messages,
     get_session_memory,
     save_session_memory,
-    update_session_activity,
 )
 from app.core.config import get_settings
 from app.core.constants import LeadStatus
@@ -225,12 +224,9 @@ async def process_message(
     language = memory.language
 
     # ── 3. Registrar mensaje usuario en RAM ────────────────────
-    memory.messages.append({
-        "role": "user",
-        "content": user_message,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
-    update_session_activity(memory)
+    # add_message aplica el cap de memoria (evita crecimiento ilimitado) y
+    # actualiza last_active. No usar messages.append directo.
+    memory.add_message("user", user_message)
 
     # ── 4. Hybrid Search ───────────────────────────────────────
     # Modo booking: ya en el flujo de datos, o el usuario pide agendar y hay
@@ -343,13 +339,12 @@ async def process_message(
             )
 
     # ── 9. Registrar respuesta assistant en RAM ────────────────
-    memory.messages.append({
-        "role": "assistant",
-        "content": response_data.final_text,
-        "has_properties": search_result.total_found > 0,
-        "property_count": search_result.total_found,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
+    memory.add_message(
+        "assistant",
+        response_data.final_text,
+        has_properties=search_result.total_found > 0,
+        property_count=search_result.total_found,
+    )
 
     # ── 10. Persistencia ───────────────────────────────────────
     try:
@@ -863,22 +858,29 @@ async def _persist_messages(
     user_content: str,
     assistant_content: str,
 ) -> None:
-    """Persiste par de mensajes (user + assistant) en DB."""
-    now = datetime.now(timezone.utc).isoformat()
+    """Persiste par de mensajes (user + assistant) en DB.
+
+    created_at distintos (assistant +1ms) para garantizar el orden user→assistant
+    al restaurar desde DB: created_at es la única clave de orden y compartir el
+    mismo timestamp dejaba el orden del turno indeterminado.
+    """
+    now = datetime.now(timezone.utc)
+    user_ts = now.isoformat()
+    assistant_ts = (now + timedelta(microseconds=1000)).isoformat()
 
     user_msg = Message(
         session_id=session_id,
         tenant_id=tenant_id,
         role="user",
         content=user_content,
-        created_at=now,
+        created_at=user_ts,
     )
     assistant_msg = Message(
         session_id=session_id,
         tenant_id=tenant_id,
         role="assistant",
         content=assistant_content,
-        created_at=now,
+        created_at=assistant_ts,
     )
 
     session.add(user_msg)

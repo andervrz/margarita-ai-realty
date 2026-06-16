@@ -164,17 +164,17 @@ class IngestionPipeline:
             )
             existing = result.scalar_one_or_none()
         
-        # Generar raw_embed_text
-        raw_text = generate_raw_embed_text(row_dict)
+        # Skip ANTES de generar el embedding: si la fila no cambió no hay que
+        # pagar la inferencia del modelo (era el costo que se desperdiciaba).
+        if existing and existing.property_hash == new_hash:
+            stats["skipped"] += 1
+            return
 
-        # Generar embedding vectorial para pgvector
+        # Solo para filas nuevas o modificadas: texto + embedding pgvector.
+        raw_text = generate_raw_embed_text(row_dict)
         embedding = await embed_text(raw_text)
 
         if existing:
-            if existing.property_hash == new_hash:
-                stats["skipped"] += 1
-                return
-            
             # Update
             for key, value in row_dict.items():
                 if hasattr(existing, key) and key not in ("id", "created_at"):

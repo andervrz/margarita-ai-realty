@@ -251,7 +251,7 @@ async def resend_notifications(
     """
     from sqlalchemy import select
 
-    from app.notifications.dispatcher import dispatch_booking_notifications
+    from app.notification.dispatcher import dispatch_booking_notifications
 
     tenant_id = tenant["id"]
     now_iso = datetime.now(timezone.utc).isoformat()
