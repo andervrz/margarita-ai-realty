@@ -185,6 +185,24 @@ async def hybrid_search(
 
     # ── Capa 1b: LLM fallback ─────────────────────────────────────
     if filters.is_empty:
+        # "Ver propiedades" / "más opciones" / "muéstrame todo": explícito pero
+        # SIN criterios. No gastamos un LLM fallback ni devolvemos un top-3 por
+        # defecto (esas 3 propiedades sueltas que ensuciaban la conversación).
+        # El engine conserva el foco previo (carry-forward) y el LLM-chat guía
+        # al usuario a concretar tipo/zona/operación/precio.
+        if _has_browse_intent(user_query):
+            logger.info(
+                "browse_intent_no_filters",
+                session_id=session_id,
+                query=user_query[:80],
+            )
+            return SearchResult(
+                properties=[],
+                source="no_results",
+                total_found=0,
+                query_text=user_query,
+            )
+
         if _should_allow_llm_fallback(session_id):
             # Incrementar contador ANTES de llamar al LLM
             _llm_fallback_counts[session_id] += 1
@@ -229,13 +247,14 @@ async def hybrid_search(
         },
     )
 
-    # ── Gate: sin filtros y sin intención de explorar ─────────────
-    # Evita el "top-3 por defecto" en mensajes intrascendentes (un nombre, un
-    # "no estoy seguro", un follow-up sin criterios) que ensuciaba el foco.
-    # "Ver propiedades" / "muéstrame todo" / "más opciones" sí pasan.
-    if filters.is_empty and not _has_browse_intent(user_query):
+    # ── Gate: sin filtros estructurales → no buscar ───────────────
+    # Tras regex + LLM, si no hay ningún filtro concreto NO devolvemos un
+    # "top-3 por defecto": ensuciaba la conversación con propiedades sueltas.
+    # El engine conserva el foco previo (carry-forward). Solo se busca cuando
+    # el usuario concretó tipo/zona/operación/precio.
+    if filters.is_empty:
         logger.info(
-            "no_filters_no_browse",
+            "no_filters_skip_search",
             session_id=session_id,
             query=user_query[:80],
         )
