@@ -183,11 +183,6 @@ def detect_language(text: str) -> LanguageResult:
     )
 
 
-def get_language_code(result: LanguageResult) -> str:
-    """Shortcut helper."""
-    return result.detected
-
-
 def should_switch_language(
     current_language: str,
     new_result: LanguageResult,
@@ -293,9 +288,5 @@ if __name__ == "__main__":
     assert r.detected == "es"
     assert r.signal_words == 0
     print("✅ Sin señales → fallback ES")
-
-    # Test 9: get_language_code
-    assert get_language_code(r) == "es"
-    print("✅ get_language_code OK")
 
     print("\n🎉 Todos los smoke tests pasaron ✅")

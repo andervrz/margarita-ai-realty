@@ -1,5 +1,5 @@
 # src/app/ingestion/embedder.py
-"""Embeddings con sentence-transformers (local, sin servidor).
+"""Embeddings con fastembed (ONNX local, sin PyTorch ni servidor).
 
 Carga lazy del modelo — no bloquea el startup de FastAPI.
 Todas las operaciones CPU-bound corren en asyncio.to_thread()
@@ -40,19 +40,6 @@ async def embed_text(text: str) -> list[float]:
         lambda: list(model.embed([text]))[0]
     )
     return embedding.tolist()
-
-
-async def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Batch embedding de múltiples textos.
-    
-    Significativamente más rápido que N llamadas a embed_text.
-    Usar para ingestion pipeline completa de CSV.
-    """
-    model = await _get_model_async()
-    embeddings = await asyncio.to_thread(
-        lambda: list(model.embed(texts))
-    )
-    return [e.tolist() for e in embeddings]
 
 
 def generate_raw_embed_text(row_data: dict) -> str:
@@ -119,15 +106,6 @@ if __name__ == "__main__":
             assert len(emb) == settings.embedding_dims
             assert isinstance(emb[0], float)
             print(f"  ✅ embed_text: {len(emb)} dims, primer valor={emb[0]:.4f}")
-
-            # Test batch
-            embs = await embed_texts([
-                "Apartamento en Porlamar",
-                "Casa frente al mar en Playa El Agua",
-            ])
-            assert len(embs) == 2
-            assert len(embs[0]) == settings.embedding_dims
-            print(f"  ✅ embed_texts: batch de {len(embs)} textos")
 
             # Test singleton — segunda llamada no recarga el modelo
             emb2 = await embed_text("test singleton")

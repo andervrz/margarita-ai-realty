@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # ── Database (SQLite (dev) o PostgreSQL + pgvector) ────
     database_url: str = Field(default="sqlite+aiosqlite:///./chatbot.db")
 
-    # ── Embeddings (sentence-transformers) ────────────────
+    # ── Embeddings (fastembed — ONNX, sin PyTorch) ────────
     embedding_model: str = Field(default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
     embedding_dims: int = Field(default=384)
 

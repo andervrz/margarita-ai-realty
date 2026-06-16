@@ -73,20 +73,6 @@ def _cleanup_old_sessions(current_time: float) -> None:
         _llm_fallback_last_reset.pop(sid, None)
 
 
-def _enrich_result(
-    result: SearchResult,
-    extraction_method: str,
-    total_duration_ms: float,
-) -> SearchResult:
-    """Agrega metadata de orquestación al resultado."""
-    return SearchResult(
-        properties=result.properties,
-        source=result.source,
-        total_found=result.total_found,
-        query_text=result.query_text,
-    )
-
-
 # Frases con las que el usuario pide ver/explorar el catálogo sin dar filtros.
 # Solo en estos casos una query "sin filtros" debe devolver el top-N por defecto.
 _BROWSE_INTENT = (
@@ -105,44 +91,6 @@ def _has_browse_intent(text: str) -> bool:
     """True si el usuario pide explorar el catálogo (sin filtros concretos)."""
     low = text.lower()
     return any(kw in low for kw in _BROWSE_INTENT)
-
-
-def _generate_fallback_suggestions(
-    filters: FilterQuery,
-    language: str,
-) -> list[str]:
-    """Genera sugerencias contextualizadas cuando no hay resultados."""
-    suggestions = []
-
-    if filters.zone:
-        suggestions.append(
-            f"Propiedades en {filters.zone.title()}"
-            if language == "es"
-            else f"Properties in {filters.zone.title()}"
-        )
-    if filters.max_price_usd:
-        suggestions.append(
-            f"Opciones hasta ${filters.max_price_usd:,.0f}"
-            if language == "es"
-            else f"Options under ${filters.max_price_usd:,.0f}"
-        )
-    type_terms = filters.dwelling_type or filters.property_type
-    if type_terms:
-        type_label = type_terms[0]
-        suggestions.append(
-            f"{type_label.title()}s disponibles"
-            if language == "es"
-            else f"Available {type_label}s"
-        )
-
-    if not suggestions:
-        suggestions = (
-            ["Apartamentos en Pampatar", "Casas con vista al mar", "Propiedades hasta $200,000"]
-            if language == "es"
-            else ["Apartments in Pampatar", "Houses with ocean view", "Properties under $200,000"]
-        )
-
-    return suggestions[:3]
 
 
 # ── Función Principal ─────────────────────────────────────────────
@@ -334,24 +282,6 @@ async def hybrid_search(
     )
 
 
-# ── Utilidades ────────────────────────────────────────────────────
-
-def get_circuit_breaker_stats() -> dict:
-    """Retorna estado del circuit breaker para monitoreo."""
-    return {
-        "tracked_sessions": len(_llm_fallback_counts),
-        "limit_per_session": LLM_FALLBACK_LIMIT_PER_SESSION,
-        "window_seconds": LLM_FALLBACK_WINDOW_SECONDS,
-        "sessions": dict(_llm_fallback_counts),
-    }
-
-
-def reset_circuit_breaker() -> None:
-    """Resetea el circuit breaker (útil para testing)."""
-    _llm_fallback_counts.clear()
-    _llm_fallback_last_reset.clear()
-
-
 # ── Smoke Tests ───────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -362,7 +292,8 @@ if __name__ == "__main__":
 
         # Test 1: Circuit breaker
         print("🧪 Test 1: Circuit breaker")
-        reset_circuit_breaker()
+        _llm_fallback_counts.clear()
+        _llm_fallback_last_reset.clear()
         sid = "test-session"
 
         for i in range(3):
@@ -377,28 +308,6 @@ if __name__ == "__main__":
         _llm_fallback_last_reset[sid] = time.time() - LLM_FALLBACK_WINDOW_SECONDS - 1
         assert _should_allow_llm_fallback(sid) is True  # ventana expiró → reset
         print("   ✅ Ventana de tiempo se resetea correctamente")
-
-        # Test 3: Sugerencias por idioma
-        print("\n🧪 Test 3: Sugerencias contextualizadas")
-        from app.schemas.search import FilterQuery
-
-        f_es = FilterQuery(zone="pampatar", max_price_usd=200000, raw_query="test")
-        sugs_es = _generate_fallback_suggestions(f_es, "es")
-        assert any("Pampatar" in s for s in sugs_es)
-        assert any("$200,000" in s for s in sugs_es)
-        print("   ✅ Sugerencias ES correctas")
-
-        f_en = FilterQuery(zone="pampatar", raw_query="test")
-        sugs_en = _generate_fallback_suggestions(f_en, "en")
-        assert any("Pampatar" in s for s in sugs_en)
-        print("   ✅ Sugerencias EN correctas")
-
-        # Test 4: Stats del circuit breaker
-        print("\n🧪 Test 4: Stats del circuit breaker")
-        stats = get_circuit_breaker_stats()
-        assert "tracked_sessions" in stats
-        assert "limit_per_session" in stats
-        print(f"   ✅ Stats: {stats['tracked_sessions']} sesiones tracked")
 
         print("\n🎉 Todos los smoke tests pasaron ✅")
 

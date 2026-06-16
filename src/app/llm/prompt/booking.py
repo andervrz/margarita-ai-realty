@@ -1,8 +1,8 @@
 # src/app/llm/prompts/booking.py
 """Prompts para recopilación de lead — booking flow step-by-step.
 
-Flujo de 7 pasos: nombre → email → teléfono → fecha → hora → notas → confirmar.
-DURATION eliminado — la duración la define el tenant en config, no el usuario.
+Flujo simplificado de 5 pasos: nombre → teléfono → email → fecha (opcional) → confirmar.
+Los textos se muestran directamente al usuario (no son instrucciones al LLM).
 
 Principios:
   - Un paso a la vez. No pedir todos los datos de golpe.
@@ -93,42 +93,6 @@ def get_booking_prompt(
     return template.format_map(_SafeDict(**kwargs))
 
 
-def get_booking_summary(
-    name: str,
-    email: str,
-    phone: str,
-    preferred_date: str,
-    preferred_time: str,
-    duration: int = 60,
-    notes: str = "",
-    language: str = "es",
-) -> str:
-    """Genera resumen de booking para confirmación final."""
-    if language == "es":
-        return (
-            f"Resumen de tu visita:\n\n"
-            f"👤 Nombre: {name}\n"
-            f"📧 Email: {email}\n"
-            f"📱 Teléfono: {phone}\n"
-            f"📅 Fecha: {preferred_date}\n"
-            f"🕐 Hora: {preferred_time}\n"
-            f"⏱️ Duración: {duration} minutos\n"
-            f"📝 Notas: {notes or 'Sin notas'}\n\n"
-            f"¿Confirmamos? ✅"
-        )
-    return (
-        f"Visit summary:\n\n"
-        f"👤 Name: {name}\n"
-        f"📧 Email: {email}\n"
-        f"📱 Phone: {phone}\n"
-        f"📅 Date: {preferred_date}\n"
-        f"🕐 Time: {preferred_time}\n"
-        f"⏱️ Duration: {duration} minutes\n"
-        f"📝 Notes: {notes or 'None'}\n\n"
-        f"Shall we confirm? ✅"
-    )
-
-
 # ── Smoke Tests ───────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -178,48 +142,5 @@ if __name__ == "__main__":
     invalid = get_booking_prompt("invalid_step", language="es")
     assert invalid.startswith("Error:")
     print("✅ Paso inválido retorna error explícito")
-
-    # Test 8: Resumen ES
-    summary_es = get_booking_summary(
-        name="María González",
-        email="maria@test.com",
-        phone="+584141234567",
-        preferred_date="2027-06-15",
-        preferred_time="10:00",
-        duration=90,
-        notes="Verificar vista al mar",
-        language="es",
-    )
-    assert "María González" in summary_es
-    assert "90 minutos" in summary_es
-    assert "Verificar vista al mar" in summary_es
-    assert "¿Confirmamos?" in summary_es
-    print("✅ Resumen ES completo")
-
-    # Test 9: Resumen EN
-    summary_en = get_booking_summary(
-        name="John Doe",
-        email="john@test.com",
-        phone="+14155551234",
-        preferred_date="2027-06-15",
-        preferred_time="10:00",
-        duration=60,
-        language="en",
-    )
-    assert "John Doe" in summary_en
-    assert "60 minutes" in summary_en
-    assert "Shall we confirm?" in summary_en
-    print("✅ Resumen EN completo")
-
-    # Test 10: Resumen ES sin notas usa default
-    summary_no_notes = get_booking_summary(
-        name="Test",
-        email="t@t.com",
-        phone="+584141234567",
-        preferred_date="2027-01-01",
-        preferred_time="10:00",
-    )
-    assert "Sin notas" in summary_no_notes
-    print("✅ Resumen sin notas usa default")
 
     print("\n🎉 Todos los smoke tests pasaron ✅")

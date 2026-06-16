@@ -14,7 +14,6 @@ def file_checksum(file_content: bytes) -> str:
 _HASH_EXCLUDED_FIELDS = frozenset({
     "id", "created_at", "updated_at",
     "property_hash", "raw_embed_text",
-    "chroma_doc_id",  # si aplica en el futuro
 })
 
 def property_hash(row_data: dict[str, Any]) -> str:

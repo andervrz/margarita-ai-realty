@@ -335,14 +335,6 @@ def _extract_zone(query_norm: str) -> str | None:
     return None
 
 
-def _contains_word(text: str, term: str) -> bool:
-    """True si `term` aparece como palabra completa (no como substring).
-
-    Evita falsos positivos como "rent" dentro de "f**rent**e a la playa".
-    """
-    return re.search(rf"\b{re.escape(term)}\b", text) is not None
-
-
 def _contains_word_plural(text: str, term: str) -> bool:
     """Como _contains_word pero tolera el plural español del término.
 

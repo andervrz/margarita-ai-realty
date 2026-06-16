@@ -183,18 +183,6 @@ async def save_session_memory(
     )
 
 
-async def delete_session_memory(session_id: str) -> None:
-    """Elimina sesión del store RAM explícitamente."""
-    async with _store_lock:
-        session_store.pop(session_id, None)
-    logger.info("session_removed_from_ram", session_id=session_id)
-
-
-def get_active_session_count() -> int:
-    """Número de sesiones activas en RAM."""
-    return len(session_store)
-
-
 def build_context_messages(
     memory: SessionMemory,
     max_messages: int | None = None,
@@ -465,13 +453,6 @@ if __name__ == "__main__":
         ctx_lim = build_context_messages(many, max_messages=5)
         assert len(ctx_lim) == 5
         print("✅ Límite de mensajes respetado")
-
-        # Test 7: get_active_session_count
-        initial = get_active_session_count()
-        session_store["test-s"] = SessionMemory("test-s", "t1")
-        assert get_active_session_count() == initial + 1
-        del session_store["test-s"]
-        print("✅ get_active_session_count")
 
         # Test 8: El último mensaje assistant NO se compacta
         mem_last = SessionMemory(

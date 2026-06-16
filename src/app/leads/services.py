@@ -173,31 +173,6 @@ async def get_leads_by_session(
     return list(result.scalars().all())
 
 
-async def get_leads_by_tenant(
-    session: AsyncSession,
-    tenant_id: str,
-    status: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> list[Lead]:
-    """Obtiene leads de un tenant con filtros opcionales.
-    
-    Args:
-        status: Filtrar por estado ('pendiente', 'confirmado', 'cancelado', etc.).
-        limit: Máximo de resultados (paginación).
-        offset: Offset para paginación.
-    """
-    stmt = select(Lead).where(Lead.tenant_id == tenant_id)
-    
-    if status:
-        stmt = stmt.where(Lead.status == status)
-    
-    stmt = stmt.order_by(Lead.created_at.desc()).limit(limit).offset(offset)
-    
-    result = await session.execute(stmt)
-    return list(result.scalars().all())
-
-
 async def update_lead_status(
     session: AsyncSession,
     lead_id: str,
@@ -254,66 +229,6 @@ async def update_lead_status(
     return lead
 
 
-async def cancel_lead(
-    session: AsyncSession,
-    lead_id: str,
-    tenant_id: str,
-) -> Lead | None:
-    """Cancela un lead (soft delete)."""
-    return await update_lead_status(
-        session=session,
-        lead_id=lead_id,
-        tenant_id=tenant_id,
-        new_status="cancelado",
-    )
-
-
-async def get_lead_stats(
-    session: AsyncSession,
-    tenant_id: str,
-) -> dict[str, Any]:
-    """Retorna estadísticas de leads por tenant.
-    
-    Útil para dashboard admin y métricas de negocio.
-    """
-    from sqlalchemy import func
-    
-    # Total por estado
-    stmt = (
-        select(Lead.status, func.count(Lead.id))
-        .where(Lead.tenant_id == tenant_id)
-        .group_by(Lead.status)
-    )
-    result = await session.execute(stmt)
-    status_counts = {row[0]: row[1] for row in result.all()}
-    
-    # Total general
-    total = sum(status_counts.values())
-    
-    # Promedio qualification_score
-    avg_stmt = select(func.avg(Lead.qualification_score)).where(
-        Lead.tenant_id == tenant_id
-    )
-    avg_result = await session.execute(avg_stmt)
-    avg_score = avg_result.scalar() or 0
-    
-    # Compradores internacionales
-    intl_stmt = select(func.count(Lead.id)).where(
-        Lead.tenant_id == tenant_id,
-        Lead.is_international == True,
-    )
-    intl_result = await session.execute(intl_stmt)
-    intl_count = intl_result.scalar() or 0
-    
-    return {
-        "total": total,
-        "by_status": status_counts,
-        "average_score": round(float(avg_score), 2),
-        "international_count": intl_count,
-        "international_percentage": round((intl_count / total * 100), 2) if total > 0 else 0,
-    }
-
-
 # ── Smoke Test ────────────────────────────────────────────────────
 if __name__ == "__main__":
     import asyncio
@@ -353,15 +268,7 @@ if __name__ == "__main__":
         assert "whatsapp_sent" in sig.parameters
         assert "email_sent" in sig.parameters
         print("  ✅ update_lead_status tiene parámetros de tracking")
-        
-        # Test 4: cancel_lead es soft delete
-        assert inspect.iscoroutinefunction(cancel_lead)
-        print("  ✅ cancel_lead es soft delete (status='cancelado')")
-        
-        # Test 5: get_lead_stats retorna dict
-        assert inspect.iscoroutinefunction(get_lead_stats)
-        print("  ✅ get_lead_stats es async")
-        
+
         # Test 6: Tenant isolation en queries
         # Verificamos que todas las funciones reciben tenant_id
         assert "tenant_id" in sig.parameters
