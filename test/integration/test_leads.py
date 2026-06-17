@@ -12,7 +12,7 @@ from app.db.models.lead import Lead
 
 async def test_create_lead_persists(db_session, test_tenant, test_chat_session):
     """Lead válido se persiste en DB con todos los campos."""
-    from app.leads.service import create_lead
+    from app.leads.services import create_lead
     from app.schemas.lead import LeadCreate
 
     lead_data = LeadCreate(
@@ -23,14 +23,15 @@ async def test_create_lead_persists(db_session, test_tenant, test_chat_session):
         preferred_time="14:00",
         visit_duration_minutes=60,
         notes="Interesado en vista al mar",
+        session_id=test_chat_session.id,
+        tenant_id=test_tenant.id,
+        qualification_score=80,
     )
 
     lead = await create_lead(
         session=db_session,
         lead_data=lead_data,
-        session_id=test_chat_session.id,
         tenant_id=test_tenant.id,
-        qualification_score=80,
     )
 
     assert lead.id is not None
@@ -89,7 +90,7 @@ def test_lead_create_invalid_time_format():
 
 async def test_update_lead_status(db_session, test_lead):
     """update_lead_status cambia el estado y actualiza updated_at."""
-    from app.leads.service import update_lead_status
+    from app.leads.services import update_lead_status
 
     original_updated_at = test_lead.updated_at
     updated = await update_lead_status(
@@ -107,7 +108,7 @@ async def test_lead_visit_duration_persists(
     db_session, test_tenant, test_chat_session
 ):
     """visit_duration_minutes se persiste correctamente."""
-    from app.leads.service import create_lead
+    from app.leads.services import create_lead
     from app.schemas.lead import LeadCreate
 
     lead = await create_lead(
@@ -119,10 +120,11 @@ async def test_lead_visit_duration_persists(
             preferred_date="2027-08-15",
             preferred_time="10:00",
             visit_duration_minutes=90,
+            session_id=test_chat_session.id,
+            tenant_id=test_tenant.id,
+            qualification_score=75,
         ),
-        session_id=test_chat_session.id,
         tenant_id=test_tenant.id,
-        qualification_score=75,
     )
 
     db_lead = (await db_session.execute(

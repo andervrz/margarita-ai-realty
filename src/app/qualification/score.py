@@ -155,13 +155,13 @@ def _calculate_modifiers(
     """
     modifiers = 0
     query_lower = current_query.lower()
-    
-    # Bonificación: múltiples zonas mencionadas
-    from app.qualification.signals import MARGARITA_ZONES
-    zones_mentioned = sum(1 for z in MARGARITA_ZONES if z in query_lower)
-    if zones_mentioned >= 2:
+
+    # Bonificación: múltiples zonas mencionadas (comparando opciones).
+    # Se evalúa sobre TODA la conversación (extracted), no solo el query actual,
+    # que suele estar vacío o ser un único mensaje.
+    if extracted.zones_mentioned >= 2:
         modifiers += 5
-        logger.debug("modifier_multiple_zones", zones=zones_mentioned)
+        logger.debug("modifier_multiple_zones", zones=extracted.zones_mentioned)
     
     # Bonificación: intención de visita explícita
     visit_keywords_es = ["visita", "agendar", "cita", "ver la propiedad", "cuándo puedo ver"]

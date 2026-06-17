@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 import time
 
 from app.core.config import get_settings
@@ -27,8 +26,8 @@ from app.core.logging import get_logger
 from app.db.models.lead import Lead
 from app.db.models.property import Property
 from app.db.models.tenant import Tenant
-from app.notifications.whatsapp import send_booking_whatsapp
-from app.notifications.email import send_booking_email
+from app.notification.whatsapp import send_booking_whatsapp
+from app.notification.email import send_booking_email
 
 logger = get_logger(__name__)
 

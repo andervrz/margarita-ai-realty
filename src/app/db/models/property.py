@@ -7,10 +7,10 @@ from typing import Optional
 
 from sqlalchemy import Float, CheckConstraint, ForeignKey, Integer, String, Text, Numeric
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import Index, Boolean, func
+from sqlalchemy import Index, Boolean
 from pgvector.sqlalchemy import Vector
 from app.db.base import Base
-from app.core.constants import PropertyType, PropertyStatus
+from app.core.constants import PropertyStatus
 
 class Property(Base):
     """Propiedad del catálogo de un tenant."""

@@ -3,7 +3,7 @@
 
 Reglas de Oro:
   1. Siempre filtra por tenant_id + status='disponible'
-  2. Si retorna resultados → sqlite-vec NO se invoca
+  2. Si retorna resultados → pgvector NO se invoca
   3. Boolean flags manejan True/False/None explícitamente
   4. Costo CERO de LLM — SQL puro con índices
 """
@@ -111,7 +111,7 @@ async def search_properties_sql(
         )
     )
 
-    # 1. Property type con OR logic (property_type OR tipo_especial)
+    # 1. Operación (venta/arriendo/...) — columna property_type o tipo_especial
     if filters.property_type:
         stmt = stmt.where(
             or_(
@@ -119,6 +119,15 @@ async def search_properties_sql(
                 Property.tipo_especial.in_(filters.property_type),
             )
         )
+
+    # 1b. Tipo de vivienda (apartamento/casa/...) — no es columna estructurada,
+    # se matchea por texto contra título y tipo_especial.
+    if filters.dwelling_type:
+        dwelling_exprs = []
+        for dwelling in filters.dwelling_type:
+            dwelling_exprs.append(Property.title.ilike(f"%{dwelling}%"))
+            dwelling_exprs.append(Property.tipo_especial.ilike(f"%{dwelling}%"))
+        stmt = stmt.where(or_(*dwelling_exprs))
 
     # 2. Zona con búsqueda parcial case-insensitive
     if filters.zone:

@@ -44,6 +44,7 @@ from app.api.v1.router import api_v1_router
 from app.chat.memory import cleanup_expired_sessions
 from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
+from app.core.observability import configure_observability
 from app.exceptions import DomainError, domain_exception_handler
 
 logger = get_logger(__name__)
@@ -118,17 +119,16 @@ async def _check_db_tables() -> None:
     No crea tablas — eso es responsabilidad de Alembic.
     Solo verifica en startup para detectar configuración incorrecta.
     """
-    from sqlalchemy import text
+    from sqlalchemy import inspect
     from app.db.engine import engine
 
     try:
         async with engine.connect() as conn:
-            # Use information_schema which works on both SQLite and PostgreSQL
-            result = await conn.execute(
-                text("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name='tenants'")
+            # Inspector es agnóstico al dialecto (SQLite y PostgreSQL).
+            tables = await conn.run_sync(
+                lambda sync_conn: inspect(sync_conn).get_table_names()
             )
-            exists = result.scalar_one_or_none()
-            if not exists:
+            if "tenants" not in tables:
                 logger.warning(
                     "db_tables_not_found",
                     hint="Run: alembic upgrade head",
@@ -220,6 +220,26 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         """Health check para load balancers y uptime monitors."""
         return {"status": "ok", "service": "margarita-ai-realty"}
+
+    # ── Demo estático ─────────────────────────────────────────────
+    # Sirve demo/index.html en /demo para probar la interfaz desde el navegador
+    # (incl. Web Preview de Cloud Shell). main.py está en src/app/, así que el
+    # directorio demo/ queda dos niveles arriba de src/.
+    from pathlib import Path
+    from fastapi.staticfiles import StaticFiles
+
+    _demo_dir = Path(__file__).resolve().parents[2] / "demo"
+    if _demo_dir.is_dir():
+        app.mount(
+            "/demo",
+            StaticFiles(directory=str(_demo_dir), html=True),
+            name="demo",
+        )
+
+    # ── Observabilidad (Logfire) ──────────────────────────────────
+    # Configura + instrumenta FastAPI/httpx/SQLAlchemy/asyncpg. Token-opcional:
+    # sin LOGFIRE_TOKEN no exporta a la nube (no rompe dev/tests).
+    configure_observability(app)
 
     return app
 

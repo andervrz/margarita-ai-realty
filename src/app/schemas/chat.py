@@ -19,7 +19,7 @@ class ChatResponse(BaseModel):
     message: str
     session_id: str
     stage: QualificationStage # ← tipado y validado automáticamente por Pydantic
-    properties: list[PropertySummary] | None = None
+    properties: list[PropertyChatSummary] | None = None
     booking_step: BookingStep | None = None
 
 

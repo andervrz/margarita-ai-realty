@@ -5,11 +5,11 @@ Flujo:
   1. Capa 1:  Regex extractor (costo CERO)
   2. Capa 1b: LLM fallback (solo si regex vacío + circuit breaker permite)
   3. Capa 2:  SQL search (verdad estructural, prioridad máxima)
-  4. Capa 3:  sqlite-vec (solo si SQL vacío)
+  4. Capa 3:  pgvector (solo si SQL vacío)
   5. Capa 4:  Sin resultados → respuesta honesta con sugerencias
 
 Reglas de Oro:
-  - SQL con resultados → NO invocar sqlite-vec
+  - SQL con resultados → NO invocar pgvector
   - LLM nunca inventa propiedades — solo extrae filtros
   - Circuit breaker previene cascada de costos por queries ambiguos
 """
@@ -21,7 +21,6 @@ from collections import defaultdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.schemas.search import FilterQuery, SearchResult
 from app.search.filter_extractor import extract_filters as extract_filters_regex
@@ -88,6 +87,26 @@ def _enrich_result(
     )
 
 
+# Frases con las que el usuario pide ver/explorar el catálogo sin dar filtros.
+# Solo en estos casos una query "sin filtros" debe devolver el top-N por defecto.
+_BROWSE_INTENT = (
+    # ES
+    "ver propiedad", "ver propiedades", "muestrame", "muéstrame", "muestra",
+    "mostrar", "que tienes", "qué tienes", "que hay", "qué hay", "todas",
+    "todo", "opciones", "mas opciones", "más opciones", "otras opciones",
+    "disponible", "disponibles", "catalogo", "catálogo", "lista", "listado",
+    # EN
+    "show", "see propert", "what do you have", "all propert", "options",
+    "more options", "available", "list", "browse", "anything",
+)
+
+
+def _has_browse_intent(text: str) -> bool:
+    """True si el usuario pide explorar el catálogo (sin filtros concretos)."""
+    low = text.lower()
+    return any(kw in low for kw in _BROWSE_INTENT)
+
+
 def _generate_fallback_suggestions(
     filters: FilterQuery,
     language: str,
@@ -107,8 +126,9 @@ def _generate_fallback_suggestions(
             if language == "es"
             else f"Options under ${filters.max_price_usd:,.0f}"
         )
-    if filters.property_type:
-        type_label = filters.property_type[0]
+    type_terms = filters.dwelling_type or filters.property_type
+    if type_terms:
+        type_label = type_terms[0]
         suggestions.append(
             f"{type_label.title()}s disponibles"
             if language == "es"
@@ -165,6 +185,24 @@ async def hybrid_search(
 
     # ── Capa 1b: LLM fallback ─────────────────────────────────────
     if filters.is_empty:
+        # "Ver propiedades" / "más opciones" / "muéstrame todo": explícito pero
+        # SIN criterios. No gastamos un LLM fallback ni devolvemos un top-3 por
+        # defecto (esas 3 propiedades sueltas que ensuciaban la conversación).
+        # El engine conserva el foco previo (carry-forward) y el LLM-chat guía
+        # al usuario a concretar tipo/zona/operación/precio.
+        if _has_browse_intent(user_query):
+            logger.info(
+                "browse_intent_no_filters",
+                session_id=session_id,
+                query=user_query[:80],
+            )
+            return SearchResult(
+                properties=[],
+                source="no_results",
+                total_found=0,
+                query_text=user_query,
+            )
+
         if _should_allow_llm_fallback(session_id):
             # Incrementar contador ANTES de llamar al LLM
             _llm_fallback_counts[session_id] += 1
@@ -209,6 +247,24 @@ async def hybrid_search(
         },
     )
 
+    # ── Gate: sin filtros estructurales → no buscar ───────────────
+    # Tras regex + LLM, si no hay ningún filtro concreto NO devolvemos un
+    # "top-3 por defecto": ensuciaba la conversación con propiedades sueltas.
+    # El engine conserva el foco previo (carry-forward). Solo se busca cuando
+    # el usuario concretó tipo/zona/operación/precio.
+    if filters.is_empty:
+        logger.info(
+            "no_filters_skip_search",
+            session_id=session_id,
+            query=user_query[:80],
+        )
+        return SearchResult(
+            properties=[],
+            source="no_results",
+            total_found=0,
+            query_text=user_query,
+        )
+
     # ── Capa 2: SQL (verdad estructural) ──────────────────────────
     sql_start = time.perf_counter()
     sql_result = await search_properties_sql(
@@ -232,7 +288,7 @@ async def hybrid_search(
         )
         return sql_result
 
-    # ── Capa 3: sqlite-vec (fallback semántico) ───────────────────
+    # ── Capa 3: pgvector (fallback semántico) ───────────────────
     logger.info(
         "sql_empty_triggering_vec",
         tenant_id=tenant_id,
@@ -300,7 +356,6 @@ def reset_circuit_breaker() -> None:
 
 if __name__ == "__main__":
     import asyncio
-    from unittest.mock import AsyncMock, patch
 
     async def run_tests():
         print("🔥 Smoke Tests — hybrid.py\n")

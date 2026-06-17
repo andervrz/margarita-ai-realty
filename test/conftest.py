@@ -9,6 +9,13 @@ Jerarquía:
 
 from __future__ import annotations
 
+import os
+
+# Los tests E2E (http_client) usan el engine real de la app. Forzamos una DB
+# de test aislada ANTES de importar cualquier módulo de app, para no tocar la
+# DB de desarrollo. app.db.engine prioriza esta env var sobre settings.
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./.pytest_app.db"
+
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -33,9 +40,11 @@ from app.db.models.tenant import Tenant
 
 @pytest_asyncio.fixture
 async def async_engine():
-    """SQLite en memoria con WAL + sqlite-vec + foreign_keys."""
-    import sqlite_vec
+    """SQLite en memoria con WAL + foreign_keys.
 
+    Nota: la búsqueda vectorial usa pgvector (solo PostgreSQL); en los tests
+    sobre SQLite la columna ``embedding`` existe pero no se hace KNN.
+    """
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
 
     @event.listens_for(engine.sync_engine, "connect")
@@ -44,9 +53,6 @@ async def async_engine():
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
-        dbapi_conn.enable_load_extension(True)
-        sqlite_vec.load(dbapi_conn)
-        dbapi_conn.enable_load_extension(False)
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -251,18 +257,56 @@ async def test_lead(
 
 @pytest_asyncio.fixture
 async def http_client() -> AsyncGenerator[AsyncClient, None]:
+    """AsyncClient para tests e2e — corre contra el engine real de la app.
+
+    En development el middleware usa DEV_TENANT (id=dev-tenant-001) sin auth.
+    Creamos el schema y sembramos ese tenant en la DB de la app para que las
+    inserciones con FK (properties/leads → tenants) no fallen. Schema limpio
+    por test (function-scoped).
     """
-    AsyncClient para tests e2e.
-    Usa APP_ENV=development → DEV_TENANT sin auth real.
-    """
+    from app.api.middleware import _DEV_TENANT
+    from app.db.engine import AsyncSessionLocal, engine
     from app.main import create_app
+
+    # Schema fresco en el engine real de la app
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Sembrar DEV_TENANT (allowed_origins es String JSON; añadir timestamps)
+    now = datetime.now(timezone.utc).isoformat()
+    async with AsyncSessionLocal() as session:
+        session.add(Tenant(
+            id=_DEV_TENANT["id"],
+            name=_DEV_TENANT["name"],
+            slug=_DEV_TENANT["slug"],
+            plan=_DEV_TENANT["plan"],
+            api_key_hash=_DEV_TENANT["api_key_hash"],
+            qualification_threshold=_DEV_TENANT["qualification_threshold"],
+            session_ttl_minutes=_DEV_TENANT["session_ttl_minutes"],
+            visit_duration_minutes=_DEV_TENANT["visit_duration_minutes"],
+            calendar_enabled=_DEV_TENANT["calendar_enabled"],
+            email_enabled=_DEV_TENANT["email_enabled"],
+            whatsapp_enabled=_DEV_TENANT["whatsapp_enabled"],
+            agent_email=_DEV_TENANT["agent_email"],
+            agent_whatsapp=_DEV_TENANT["agent_whatsapp"],
+            allowed_origins='["*"]',
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        ))
+        await session.commit()
+
     app = create_app()
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-        headers={"X-API-Key": "dev"},
-    ) as client:
-        yield client
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-API-Key": "dev"},
+        ) as client:
+            yield client
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
 
 
 # ── CSV Fixtures ──────────────────────────────────────────────────

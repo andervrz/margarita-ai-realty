@@ -144,8 +144,14 @@ class _FilterLLMOutput(BaseModel):
         return None
 
     def to_filter_query(self, raw_query: str) -> FilterQuery:
+        # El LLM mete operaciones y viviendas mezcladas en property_type;
+        # las separamos con la misma fuente de verdad que el extractor regex.
+        from app.search.filter_extractor import split_property_terms
+
+        operations, dwellings = split_property_terms(self.property_type)
         return FilterQuery(
-            property_type=self.property_type,
+            property_type=operations,
+            dwelling_type=dwellings,
             zone=self.zone,
             min_price_usd=self.min_price_usd,
             max_price_usd=self.max_price_usd,

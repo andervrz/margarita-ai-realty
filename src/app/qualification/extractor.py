@@ -25,7 +25,6 @@ from dataclasses import dataclass, field
 
 from app.core.logging import get_logger
 from app.qualification.signals import (
-    SIGNALS,
     detect_signal,
     get_signal_points,
     MARGARITA_ZONES,
@@ -52,8 +51,9 @@ class ExtractedSignals:
     
     # Metadatos
     total_user_messages: int = 0
+    zones_mentioned: int = 0  # zonas distintas mencionadas en toda la conversación
     signals_found: list[str] = field(default_factory=list)
-    
+
     def to_dict(self) -> dict[str, bool | int | list[str]]:
         """Serializa para logs/respuestas."""
         return {
@@ -66,6 +66,7 @@ class ExtractedSignals:
             "engagement_depth": self.engagement_depth,
             "international_buyer_signal": self.international_buyer_signal,
             "total_user_messages": self.total_user_messages,
+            "zones_mentioned": self.zones_mentioned,
             "signals_found": self.signals_found,
         }
 
@@ -97,16 +98,25 @@ def extract_signals_from_history(
         result.signals_found.append("engagement_depth")
     
     # Detectar señales en cada mensaje del usuario
+    zones_seen: set[str] = set()
     for msg in user_messages:
         text = msg.get("content", "")
         if not text:
             continue
-        
+
         # Detectar cada señal (excepto las que requieren lógica especial)
         _detect_standard_signals(text, language, result)
-        
+
         # Detectar follow-up de propiedad específica
         _detect_property_followup(msg, messages, result)
+
+        # Acumular zonas distintas mencionadas en toda la conversación
+        low = text.lower()
+        for zone in MARGARITA_ZONES:
+            if zone in low:
+                zones_seen.add(zone)
+
+    result.zones_mentioned = len(zones_seen)
     
     logger.debug(
         "signals_extracted",

@@ -18,7 +18,8 @@ class Session(Base):
     __table_args__ = (
         Index("idx_sessions_tenant_active", "tenant_id", "last_active_at"),
         CheckConstraint(
-        "booking_step IN ('name', 'email', 'phone', 'date', 'time', 'notes', 'confirm') OR booking_step IS NULL",
+        # Pasos del flujo simplificado (ES usa 'nombre', EN usa 'name').
+        "booking_step IN ('name', 'nombre', 'phone', 'email', 'date', 'confirm') OR booking_step IS NULL",
         name="ck_session_booking_step"
         )
     )

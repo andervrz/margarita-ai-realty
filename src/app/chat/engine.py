@@ -19,10 +19,11 @@ Principios:
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+import logfire
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,13 +36,22 @@ from app.chat.memory import (
     update_session_activity,
 )
 from app.core.config import get_settings
+from app.core.constants import LeadStatus
 from app.core.logging import get_logger
 from app.db.models.message import Message
+from app.leads.services import create_lead_from_booking, update_lead_status
+from app.leads.validator import (
+    _validate_phone_value,
+    sanitize_name,
+    validate_email,
+    validate_name,
+)
 from app.llm.client import LLMNoProviderAvailable, chat_completion
 from app.llm.prompt.booking import get_booking_prompt
 from app.llm.prompt.system_en import get_system_prompt_en
 from app.llm.prompt.system_es import get_system_prompt_es
 from app.llm.router import get_chat_model
+from app.notification.dispatcher import dispatch_booking_notifications
 from app.qualification.score import QualificationResult, calculate_qualification_score
 from app.schemas.search import SearchResult
 from app.search.hybrid import hybrid_search
@@ -51,8 +61,63 @@ logger = get_logger(__name__)
 # ── Booking Steps ─────────────────────────────────────────────────
 # DURATION eliminado — la duración la define el tenant, no el usuario
 
-BOOKING_STEPS_ES = ["nombre", "email", "phone", "date", "time", "notes", "confirm"]
-BOOKING_STEPS_EN = ["name", "email", "phone", "date", "time", "notes", "confirm"]
+# Flujo simplificado: nombre y apellido → teléfono → correo → fecha (opcional) → confirmar.
+# La fecha NO bloquea: si el usuario no la concreta, igual se cierra el booking.
+BOOKING_STEPS_ES = ["nombre", "phone", "email", "date", "confirm"]
+BOOKING_STEPS_EN = ["name", "phone", "email", "date", "confirm"]
+
+# Intención explícita de visitar/conocer una propiedad → dispara el booking
+# aunque el score de calificación no haya llegado al umbral.
+_BOOKING_INTENT_ES = (
+    "visita", "visitar", "agendar", "agenda", "cita", "verla", "verlo",
+    "ver la propiedad", "conocer", "coordinar",
+)
+_BOOKING_INTENT_EN = (
+    "visit", "schedule", "appointment", "see the property", "see it",
+    "book a", "tour",
+)
+
+# Cierre del booking — el dueño/agente se comunicará con el interesado.
+_BOOKING_CLOSING_ES = (
+    "¡Listo! 🙌 El dueño o agente de la propiedad se comunicará contigo muy pronto "
+    "para coordinar los detalles. ¡Gracias por tu interés! 🏝️"
+)
+_BOOKING_CLOSING_EN = (
+    "All set! 🙌 The property owner or agent will contact you very soon to coordinate "
+    "the details. Thanks for your interest! 🏝️"
+)
+
+
+def _has_booking_intent(text: str, language: str) -> bool:
+    """Detecta si el usuario quiere visitar/conocer una propiedad."""
+    keywords = _BOOKING_INTENT_ES if language == "es" else _BOOKING_INTENT_EN
+    low = text.lower()
+    return any(kw in low for kw in keywords)
+
+
+def _build_suggestions(
+    memory: SessionMemory,
+    properties_in_focus: list[dict[str, Any]],
+    language: str,
+) -> list[str]:
+    """Genera quick replies / chips contextuales para el widget.
+
+    - Durante booking: sin chips (el usuario está dando sus datos).
+    - Sin propiedades en foco (saludo/descubrimiento/caso sin criterios):
+      chips de intención para destrabar la conversación.
+    - Con propiedades en foco: ofrecer agendar visita.
+    """
+    if memory.is_booking_active:
+        return []
+
+    if not properties_in_focus:
+        if language == "en":
+            return ["🏠 Buy", "🔑 Rent", "See properties"]
+        return ["🏠 Comprar", "🔑 Alquilar", "Ver propiedades"]
+
+    if language == "en":
+        return ["📅 Schedule a visit"]
+    return ["📅 Agendar una visita"]
 
 
 # ── ChatResponse ──────────────────────────────────────────────────
@@ -68,6 +133,8 @@ class ChatResponse:
     properties_found: int
     duration_ms: float
     language: str
+    properties: list[dict] = field(default_factory=list)  # cards para el cliente
+    suggestions: list[str] = field(default_factory=list)  # quick replies / chips
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +144,8 @@ class ChatResponse:
             "is_booking_active": self.is_booking_active,
             "booking_step": self.booking_step,
             "properties_found": self.properties_found,
+            "properties": self.properties,
+            "suggestions": self.suggestions,
             "duration_ms": self.duration_ms,
             "language": self.language,
         }
@@ -86,6 +155,8 @@ class ChatResponse:
 class _ResponseAssembly:
     """Resultado interno del ensamblado de respuesta."""
     final_text: str
+    # True cuando el booking se acaba de completar y hay que persistir el lead.
+    booking_complete: bool = False
 
 
 # ── Función Principal ─────────────────────────────────────────────
@@ -162,46 +233,87 @@ async def process_message(
     update_session_activity(memory)
 
     # ── 4. Hybrid Search ───────────────────────────────────────
-    try:
-        search_result: SearchResult = await hybrid_search(
-            session=session,
-            tenant_id=tenant_id,
-            user_query=user_message,
-            session_id=session_id,
-            language=language,
-            max_results=settings.max_properties_per_response,  # campo correcto de Settings
-        )
-    except Exception as exc:
-        logger.exception("hybrid_search_failed", session_id=session_id, error=str(exc))
-        search_result = SearchResult(
-            properties=[],
-            source="search_error",
-            total_found=0,
-        )
+    # Modo booking: ya en el flujo de datos, o el usuario pide agendar y hay
+    # una propiedad en foco. En ese caso NO buscamos (preserva el foco y evita
+    # que mensajes como "Anderson Vasquez" devuelvan un top-3 por defecto) ni
+    # llamamos al LLM (las preguntas del booking son deterministas).
+    booking_mode = memory.is_booking_active or (
+        _has_booking_intent(user_message, language) and bool(memory.last_properties)
+    )
+
+    if booking_mode:
+        search_result = SearchResult(properties=[], source="no_results", total_found=0)
+        logfire.info("search_skipped", reason="booking_mode", session_id=session_id)
+    else:
+        with logfire.span("chat.hybrid_search", session_id=session_id, query=user_message):
+            try:
+                search_result = await hybrid_search(
+                    session=session,
+                    tenant_id=tenant_id,
+                    user_query=user_message,
+                    session_id=session_id,
+                    language=language,
+                    max_results=settings.max_properties_per_response,  # campo correcto de Settings
+                )
+            except Exception as exc:
+                logger.exception("hybrid_search_failed", session_id=session_id, error=str(exc))
+                search_result = SearchResult(
+                    properties=[],
+                    source="no_results",  # "search_error" no es miembro del enum
+                    total_found=0,
+                )
+            logfire.info(
+                "search_result",
+                source=str(search_result.source),
+                properties_found=search_result.total_found,
+            )
+
+    # ── 4b. Carry-forward de propiedades en foco ───────────────
+    # Si la búsqueda actual trajo propiedades, actualizamos el foco.
+    # Si no (follow-up tipo "me gusta la de $400" o "agendar visita"),
+    # reusamos las últimas mostradas para no perder el contexto.
+    if search_result.properties:
+        memory.last_properties = [
+            p.model_dump() if hasattr(p, "model_dump") else dict(p)
+            for p in search_result.properties
+        ]
+        properties_in_focus = memory.last_properties
+        focus_is_fresh = True
+    else:
+        properties_in_focus = memory.last_properties
+        focus_is_fresh = False
 
     # ── 5. Build LLM Context ───────────────────────────────────
     llm_messages = _build_llm_messages(
         memory=memory,
-        search_result=search_result,
+        properties=properties_in_focus,
+        focus_is_fresh=focus_is_fresh,
         language=language,
         tenant_name=tenant_name,
         max_messages=settings.max_messages_in_context,
     )
 
     # ── 6. LLM Call ────────────────────────────────────────────
-    try:
-        model = get_chat_model(tenant_plan="pro")
-        response_text = await chat_completion(
-            messages=llm_messages,
-            model=model,
-            timeout=settings.llm_timeout,
-        )
-    except LLMNoProviderAvailable:
-        logger.error("llm_provider_unavailable", session_id=session_id)
-        response_text = _get_fallback_response(language, "llm_unavailable")
-    except Exception as exc:
-        logger.exception("llm_unexpected_error", session_id=session_id, error=str(exc))
-        response_text = _get_fallback_response(language, "llm_unavailable")
+    # En modo booking el texto lo genera _advance_booking_flow (determinista),
+    # así que nos saltamos el LLM: evita latencia/timeouts en mitad de la
+    # captura de datos.
+    if booking_mode:
+        response_text = ""
+    else:
+        try:
+            model = get_chat_model(tenant_plan="pro")
+            with logfire.span("chat.llm_completion", model=model, language=language):
+                response_text = await chat_completion(
+                    messages=llm_messages,
+                    model=model,
+                    timeout=settings.llm_timeout,
+                )
+        except LLMNoProviderAvailable:
+            logger.error("llm_provider_unavailable", session_id=session_id)
+            response_text = _get_fallback_response(language, "llm_unavailable")
+        except Exception as exc:
+            logger.exception("llm_unexpected_error", session_id=session_id, error=str(exc))
+            response_text = _get_fallback_response(language, "llm_unavailable")
 
     # ── 7. Lead Qualification ──────────────────────────────────
     qual_result: QualificationResult = calculate_qualification_score(
@@ -217,7 +329,18 @@ async def process_message(
         qual_result=qual_result,
         memory=memory,
         language=language,
+        user_message=user_message,
     )
+
+    # ── 8b. Persistir lead si el booking se completó ───────────
+    if response_data.booking_complete:
+        with logfire.span("chat.finalize_booking", session_id=session_id):
+            await _finalize_booking(
+                session=session,
+                tenant_id=tenant_id,
+                memory=memory,
+                qual_result=qual_result,
+            )
 
     # ── 9. Registrar respuesta assistant en RAM ────────────────
     memory.messages.append({
@@ -267,6 +390,10 @@ async def process_message(
         is_booking_active=memory.is_booking_active,
         booking_step=memory.booking_step,
         properties_found=search_result.total_found,
+        # Mantener las cards de las propiedades en foco para que no
+        # desaparezcan en follow-ups donde la búsqueda no trae nada nuevo.
+        properties=[dict(p) for p in properties_in_focus],
+        suggestions=_build_suggestions(memory, properties_in_focus, language),
         duration_ms=round(duration_ms, 2),
         language=language,
     )
@@ -276,7 +403,8 @@ async def process_message(
 
 def _build_llm_messages(
     memory: SessionMemory,
-    search_result: SearchResult,
+    properties: list[dict[str, Any]],
+    focus_is_fresh: bool,
     language: str,
     tenant_name: str,
     max_messages: int,
@@ -287,11 +415,16 @@ def _build_llm_messages(
     Estructura:
       1. System prompt con contexto de propiedades
       2. Historial de conversación truncado
+
+    Args:
+        properties: Propiedades en foco (búsqueda actual o arrastradas).
+        focus_is_fresh: True si vienen de la búsqueda del turno actual,
+                        False si son las últimas mostradas (follow-up).
     """
     conversation_history = _format_conversation_history(
         build_context_messages(memory=memory, max_messages=max_messages)
     )
-    properties_context = _format_properties_context(search_result)
+    properties_context = _format_properties_context(properties, focus_is_fresh)
 
     if language == "en":
         system_prompt = get_system_prompt_en(
@@ -340,45 +473,85 @@ def _format_conversation_history(messages: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _format_properties_context(result: SearchResult) -> str:
+def _format_properties_context(
+    properties: list[dict[str, Any]],
+    focus_is_fresh: bool = True,
+) -> str:
     """
     Formatea propiedades verificadas para el system prompt.
     El LLM solo puede hablar de propiedades que aparezcan aquí.
+
+    Args:
+        properties: Propiedades en foco (dicts o PropertyChatSummary).
+        focus_is_fresh: True si son resultados nuevos de la búsqueda actual;
+                        False si son las últimas mostradas y el usuario hace
+                        follow-up sobre ellas (selección, agendar visita, etc.).
     """
-    if not result.properties:
+    if not properties:
         return "No hay propiedades que coincidan con los criterios actuales."
 
-    lines: list[str] = [
-        f"Encontradas {result.total_found} propiedades verificadas en el catálogo:"
-    ]
+    if focus_is_fresh:
+        header = f"Encontradas {len(properties)} propiedades verificadas en el catálogo:"
+    else:
+        header = (
+            "PROPIEDADES YA MOSTRADAS EN ESTA CONVERSACIÓN "
+            "(el usuario puede estar refiriéndose a una de ellas — "
+            "selección, detalles o agendar visita):"
+        )
 
-    for idx, prop in enumerate(result.properties, start=1):
+    lines: list[str] = [header]
+    lines.append(
+        "(Para el LISTADO usa solo: tipo · zona · precio. Los demás campos son "
+        "SOLO para la vista de DETALLE cuando el usuario elige una propiedad.)"
+    )
+
+    for idx, prop in enumerate(properties, start=1):
+        # properties puede contener modelos PropertyChatSummary (pydantic
+        # los coerciona) o dicts; normalizar a dict para el acceso .get().
+        if hasattr(prop, "model_dump"):
+            prop = prop.model_dump()
+
+        # Línea de cabecera: título · operación · zona · precio
         title = prop.get("title", "Propiedad")
-        line = f"{idx}. {title}"
-
+        header_line = f"{idx}. {title}"
+        if prop.get("property_type"):
+            header_line += f" [{prop['property_type']}]"
+        zone = prop.get("location_zone") or prop.get("location_city")
+        if zone:
+            header_line += f" · {zone}"
         if prop.get("price_usd"):
-            line += f" — ${prop['price_usd']:,.0f} USD"
-        if prop.get("location_zone"):
-            line += f" ({prop['location_zone']})"
+            header_line += f" · ${prop['price_usd']:,.0f} USD"
+        lines.append(header_line)
+
+        # Especificaciones (solo para vista de detalle)
+        specs: list[str] = []
         if prop.get("bedrooms"):
-            line += f" | {prop['bedrooms']}H"
+            specs.append(f"{prop['bedrooms']} habitaciones")
         if prop.get("bathrooms"):
-            line += f"/{prop['bathrooms']}B"
+            specs.append(f"{prop['bathrooms']} baños")
         if prop.get("area_m2"):
-            line += f" | {prop['area_m2']}m²"
+            specs.append(f"{prop['area_m2']}m²")
+        if prop.get("parking_spots"):
+            specs.append(f"{prop['parking_spots']} estacionamiento(s)")
+        if prop.get("capacidad_huespedes"):
+            specs.append(f"capacidad {prop['capacidad_huespedes']} huéspedes")
         if prop.get("vista_al_mar"):
-            line += " | 🌊 Vista al mar"
+            specs.append("🌊 vista al mar")
         if prop.get("frente_playa"):
-            line += " | 🏖️ Frente playa"
+            specs.append("🏖️ frente playa")
         if prop.get("uso_vacacional"):
-            line += " | 💰 Ideal inversión"
+            specs.append("💰 uso vacacional/inversión")
+        if specs:
+            lines.append(f"   Detalle: {', '.join(specs)}")
 
-        lines.append(line)
+        amenities = prop.get("amenities")
+        if amenities:
+            amenities_str = ", ".join(str(a) for a in amenities)
+            lines.append(f"   Amenidades: {amenities_str}")
 
-        # Descripción corta si existe
         description = prop.get("description_es") or prop.get("description_en")
-        if description and len(description) < 150:
-            lines.append(f"   {description}")
+        if description:
+            lines.append(f"   Descripción: {description[:400]}")
 
     return "\n".join(lines)
 
@@ -390,30 +563,41 @@ def _assemble_response(
     qual_result: QualificationResult,
     memory: SessionMemory,
     language: str,
+    user_message: str = "",
 ) -> _ResponseAssembly:
     """
-    Ensambla la respuesta final según el stage de calificación.
+    Ensambla la respuesta final.
 
     Estados:
-      - book:    activa booking flow
-      - qualify: agrega pregunta de calificación
-      - explore: respuesta directa sin modificaciones
+      - booking activo:  avanza el flujo de captura de datos
+      - intención visita: activa booking (por keyword o score >= book)
+      - qualify:         agrega pregunta de calificación si el LLM no preguntó
+      - explore:         respuesta directa sin modificaciones
     """
-    # Si ya está en booking flow — continuar el flujo
+    # Si ya está en booking flow — continuar el flujo (ignoramos el texto del
+    # LLM: durante la captura de datos las preguntas son deterministas).
     if memory.is_booking_active:
-        return _advance_booking_flow(memory, response_text, language)
+        return _advance_booking_flow(memory, language, user_message)
 
-    # Activar booking flow
-    if qual_result.stage == "book":
+    # Activar booking flow: por intención explícita de visita o por score alto.
+    # Requiere que haya una propiedad en foco para no agendar "en el aire".
+    wants_to_book = (
+        qual_result.stage == "book" or _has_booking_intent(user_message, language)
+    )
+    if wants_to_book and memory.last_properties:
         memory.is_booking_active = True
+        memory.booking_data = {}
         steps = BOOKING_STEPS_ES if language == "es" else BOOKING_STEPS_EN
         memory.booking_step = steps[0]
 
-        booking_prompt = get_booking_prompt(step=steps[0], language=language)
-        return _ResponseAssembly(final_text=f"{response_text}\n\n{booking_prompt}")
+        # Solo la pregunta determinista (sin el texto del LLM, que podría
+        # alucinar o re-preguntar).
+        return _ResponseAssembly(final_text=get_booking_prompt(steps[0], language))
 
-    # Agregar pregunta de calificación
-    if qual_result.stage == "qualify":
+    # Agregar pregunta de calificación — solo si el LLM no preguntó ya.
+    # El system prompt instruye al LLM a hacer preguntas de calificación,
+    # así que anexar siempre la del scorer duplica la pregunta.
+    if qual_result.stage == "qualify" and "?" not in response_text:
         question = _get_qualification_question(qual_result, language)
         if question:
             return _ResponseAssembly(final_text=f"{response_text}\n\n{question}")
@@ -424,32 +608,203 @@ def _assemble_response(
 
 def _advance_booking_flow(
     memory: SessionMemory,
-    response_text: str,
     language: str,
+    user_message: str,
 ) -> _ResponseAssembly:
-    """Avanza al siguiente paso del flujo de booking."""
+    """Captura la respuesta del paso actual, valida y avanza.
+
+    - nombre/phone/email: se validan; si fallan, se re-pregunta el mismo paso.
+    - date: opcional, no bloquea (se guarda tal cual o 'Por confirmar').
+    - confirm: el usuario confirma → se cierra y se marca para persistir el lead.
+    """
     steps = BOOKING_STEPS_ES if language == "es" else BOOKING_STEPS_EN
     current_step = memory.booking_step or steps[0]
 
     try:
         idx = steps.index(current_step)
     except ValueError:
-        # Paso desconocido — reiniciar
         memory.booking_step = steps[0]
-        return _ResponseAssembly(final_text=response_text)
+        return _ResponseAssembly(final_text=get_booking_prompt(steps[0], language))
 
-    # Último paso — booking completado
-    if idx >= len(steps) - 1:
+    # Paso de confirmación → el usuario ya confirmó: cerrar y persistir.
+    if current_step == "confirm":
         memory.is_booking_active = False
         memory.booking_step = None
-        return _ResponseAssembly(final_text=response_text)
+        closing = _BOOKING_CLOSING_ES if language == "es" else _BOOKING_CLOSING_EN
+        return _ResponseAssembly(final_text=closing, booking_complete=True)
+
+    # Capturar y validar la respuesta del paso actual
+    error = _capture_booking_field(memory, current_step, user_message, language)
+    if error:
+        # Dato inválido — re-preguntar el mismo paso con el error
+        prompt = get_booking_prompt(current_step, language, **memory.booking_data)
+        return _ResponseAssembly(final_text=f"{error}\n\n{prompt}")
 
     # Avanzar al siguiente paso
     next_step = steps[idx + 1]
     memory.booking_step = next_step
+    prompt = get_booking_prompt(next_step, language, **memory.booking_data)
+    return _ResponseAssembly(final_text=prompt)
 
-    prompt = get_booking_prompt(step=next_step, language=language)
-    return _ResponseAssembly(final_text=f"{response_text}\n\n{prompt}")
+
+# Palabras que indican "no tengo fecha aún" — la fecha es opcional.
+_DATE_SKIP_ES = ("no sé", "no se", "no tengo", "aún no", "aun no", "luego",
+                 "después", "despues", "no estoy seguro", "flexible", "cualquiera")
+_DATE_SKIP_EN = ("don't know", "dont know", "not sure", "later", "no date",
+                 "flexible", "any", "whenever")
+
+
+def _capture_booking_field(
+    memory: SessionMemory,
+    step: str,
+    user_message: str,
+    language: str,
+) -> str | None:
+    """Captura y valida el dato del paso actual.
+
+    Returns:
+        None si la captura fue válida; un mensaje de error (re-ask) si no.
+    """
+    text = user_message.strip()
+
+    if step == "nombre" or step == "name":
+        ok, err = validate_name(text, language)
+        if not ok:
+            return err
+        memory.booking_data["name"] = sanitize_name(text)
+        return None
+
+    if step == "phone":
+        try:
+            # Normaliza a E.164: 0414... → +58414..., y valida formato.
+            memory.booking_data["phone"] = _validate_phone_value(text)
+        except ValueError:
+            if language == "en":
+                return "That phone doesn't look right. Example: 04141234567 or +584141234567 📱"
+            return "Ese teléfono no parece válido. Ejemplo: 04141234567 o +584141234567 📱"
+        return None
+
+    if step == "email":
+        ok, err = validate_email(text, language)
+        if not ok:
+            return err
+        memory.booking_data["email"] = text
+        return None
+
+    if step == "date":
+        # Opcional — nunca bloquea
+        skips = _DATE_SKIP_ES if language == "es" else _DATE_SKIP_EN
+        low = text.lower()
+        if not text or any(s in low for s in skips):
+            memory.booking_data["preferred_date"] = "Por confirmar"
+        else:
+            memory.booking_data["preferred_date"] = text[:100]
+        return None
+
+    return None
+
+
+# ── Booking — Persistencia del Lead ───────────────────────────────
+
+def _booking_notes(memory: SessionMemory) -> str | None:
+    """Notas para el lead: propiedades que el usuario tenía en foco."""
+    titles = [
+        str(p.get("title")) for p in memory.last_properties if p.get("title")
+    ]
+    if not titles:
+        return None
+    return "Propiedades de interés: " + "; ".join(titles[:5])
+
+
+async def _finalize_booking(
+    session: AsyncSession,
+    tenant_id: str,
+    memory: SessionMemory,
+    qual_result: QualificationResult,
+) -> None:
+    """Persiste el lead capturado y notifica al agente (best-effort)."""
+    data = memory.booking_data
+    if not all(data.get(k) for k in ("name", "email", "phone")):
+        logger.warning(
+            "booking_finalize_incomplete",
+            session_id=memory.session_id,
+            captured=list(data.keys()),
+        )
+        memory.booking_data = {}
+        return
+
+    property_id = None
+    if len(memory.last_properties) == 1:
+        property_id = memory.last_properties[0].get("id")
+
+    try:
+        lead = await create_lead_from_booking(
+            session=session,
+            session_id=memory.session_id,
+            tenant_id=tenant_id,
+            name=data["name"],
+            email=data["email"],
+            phone=data["phone"],
+            preferred_date=data.get("preferred_date") or "Por confirmar",
+            property_id=property_id,
+            qualification_score=memory.qualification_score,
+            is_international=bool(getattr(qual_result, "is_international", False)),
+            notes=_booking_notes(memory),
+        )
+    except Exception as exc:
+        logger.exception(
+            "lead_persist_failed", session_id=memory.session_id, error=str(exc)
+        )
+        await session.rollback()
+        memory.booking_data = {}
+        return
+
+    logger.info(
+        "lead_persisted",
+        lead_id=str(lead.id),
+        session_id=memory.session_id,
+        tenant_id=tenant_id,
+        property_id=property_id,
+    )
+
+    await _notify_agent(session, tenant_id, lead, property_id)
+    memory.booking_data = {}
+
+
+async def _notify_agent(
+    session: AsyncSession,
+    tenant_id: str,
+    lead: Any,
+    property_id: str | None,
+) -> None:
+    """Notifica al agente por WhatsApp/email. Best-effort: no rompe el flujo."""
+    try:
+        from app.db.models.property import Property
+        from app.db.models.tenant import Tenant
+
+        tenant = await session.get(Tenant, tenant_id)
+        if tenant is None:
+            logger.info("notify_skip_no_tenant_row", tenant_id=tenant_id)
+            return
+
+        prop = await session.get(Property, property_id) if property_id else None
+        result = await dispatch_booking_notifications(lead, tenant, prop)
+
+        await update_lead_status(
+            session=session,
+            lead_id=lead.id,
+            tenant_id=tenant_id,
+            new_status=LeadStatus.PENDIENTE.value,
+            whatsapp_sent=result.whatsapp_success,
+            email_sent=result.email_success,
+        )
+    except Exception as exc:
+        logger.warning(
+            "notify_agent_failed",
+            tenant_id=tenant_id,
+            lead_id=str(getattr(lead, "id", "?")),
+            error=str(exc),
+        )
 
 
 # ── Qualification ─────────────────────────────────────────────────
@@ -579,17 +934,12 @@ if __name__ == "__main__":
         print("✅ Truncado de historial")
 
         # Test 5: Properties context vacío
-        empty_result = MagicMock()
-        empty_result.properties = []
-        empty_result.total_found = 0
-        ctx = _format_properties_context(empty_result)
+        ctx = _format_properties_context([])
         assert "No hay propiedades" in ctx
         print("✅ Properties context vacío")
 
-        # Test 6: Properties context con datos
-        mock_result = MagicMock()
-        mock_result.total_found = 1
-        mock_result.properties = [{
+        # Test 6: Properties context con datos (búsqueda fresca)
+        props = [{
             "title": "Apartamento Pampatar",
             "price_usd": 120000,
             "location_zone": "Pampatar",
@@ -597,11 +947,17 @@ if __name__ == "__main__":
             "bathrooms": 2,
             "vista_al_mar": True,
         }]
-        ctx2 = _format_properties_context(mock_result)
+        ctx2 = _format_properties_context(props, focus_is_fresh=True)
         assert "Apartamento Pampatar" in ctx2
         assert "$120,000" in ctx2
-        assert "Vista al mar" in ctx2
+        assert "vista al mar" in ctx2.lower()
         print("✅ Properties context con datos")
+
+        # Test 6b: Properties context arrastrado (follow-up)
+        ctx_carry = _format_properties_context(props, focus_is_fresh=False)
+        assert "YA MOSTRADAS" in ctx_carry
+        assert "Apartamento Pampatar" in ctx_carry
+        print("✅ Properties context arrastrado (follow-up)")
 
         # Test 7: Response assembly — stage qualify
         memory = SessionMemory(session_id="s1", tenant_id="t1")
@@ -617,8 +973,9 @@ if __name__ == "__main__":
         assert "presupuesto" in result.final_text
         print("✅ Assembly con qualify question")
 
-        # Test 8: Booking flow — activación
+        # Test 8: Booking flow — activación (requiere propiedad en foco)
         memory_book = SessionMemory(session_id="s2", tenant_id="t1")
+        memory_book.last_properties = [{"id": "p1", "title": "Apto Pampatar"}]
         qual_book = MagicMock()
         qual_book.stage = "book"
         qual_book.suggested_questions = []
@@ -632,16 +989,58 @@ if __name__ == "__main__":
         assert memory_book.booking_step == "nombre"
         print("✅ Booking flow activado")
 
-        # Test 9: Booking flow — avance de pasos
+        # Test 8b: Booking por intención de visita (sin score alto)
+        memory_intent = SessionMemory(session_id="s2b", tenant_id="t1")
+        memory_intent.last_properties = [{"id": "p1", "title": "Apto"}]
+        qual_intent = MagicMock()
+        qual_intent.stage = "qualify"
+        qual_intent.suggested_questions = []
+        _assemble_response(
+            response_text="Genial",
+            qual_result=qual_intent,
+            memory=memory_intent,
+            language="es",
+            user_message="quiero agendar una visita para verla",
+        )
+        assert memory_intent.is_booking_active is True
+        print("✅ Booking activado por intención de visita")
+
+        # Test 9: Booking flow — captura nombre y avanza (nombre → phone)
         memory_adv = SessionMemory(
             session_id="s3",
             tenant_id="t1",
             is_booking_active=True,
             booking_step="nombre",
         )
-        result_adv = _advance_booking_flow(memory_adv, "Gracias", "es")
-        assert memory_adv.booking_step == "email"
-        print("✅ Booking flow avanza al siguiente paso")
+        result_adv = _advance_booking_flow(memory_adv, "es", "Juan Pérez")
+        assert memory_adv.booking_step == "phone"
+        assert memory_adv.booking_data["name"] == "Juan Pérez"
+        print("✅ Booking captura nombre y avanza al siguiente paso")
+
+        # Test 9b: Validación falla → re-pregunta el mismo paso
+        memory_bad = SessionMemory(
+            session_id="s3c",
+            tenant_id="t1",
+            is_booking_active=True,
+            booking_step="email",
+        )
+        result_bad = _advance_booking_flow(memory_bad, "es", "esto-no-es-email")
+        assert memory_bad.booking_step == "email"  # no avanzó
+        assert "email" in result_bad.final_text.lower()
+        print("✅ Booking re-pregunta ante dato inválido")
+
+        # Test 9c: Booking flow — cierre con flag de persistencia
+        memory_close = SessionMemory(
+            session_id="s3b",
+            tenant_id="t1",
+            is_booking_active=True,
+            booking_step="confirm",
+        )
+        result_close = _advance_booking_flow(memory_close, "es", "sí")
+        assert memory_close.is_booking_active is False
+        assert result_close.booking_complete is True
+        assert "se comunicará contigo" in result_close.final_text
+        print("✅ Booking flow cierra y marca persistencia del lead")
 
         # Test 10: Booking steps no incluyen DURATION
         assert "duration" not in BOOKING_STEPS_ES

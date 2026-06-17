@@ -20,13 +20,10 @@ from __future__ import annotations
 
 
 import re
-from datetime import date, datetime, time, timezone, timedelta
-from typing import Any
+from datetime import date, datetime, time, timedelta
 
 from pydantic import BaseModel, EmailStr, field_validator, ValidationError, TypeAdapter
-from pydantic.fields import FieldInfo
 
-from app.core.config import get_settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -76,22 +73,7 @@ class LeadValidator(BaseModel):
     @field_validator("phone")
     @classmethod
     def validate_phone(cls, v: str) -> str:
-        v = v.strip().replace(" ", "").replace("-", "")
-        
-        # Formato venezolano
-        if v.startswith("+58") or v.startswith("58"):
-            if not PHONE_REGEX_VE.match(v):
-                raise ValueError("Teléfono venezolano inválido. Formato: +584141234567")
-            return v
-        
-        # Formato internacional
-        if not v.startswith("+"):
-            v = "+" + v  # Intentar agregar +
-        
-        if not PHONE_REGEX_INTL.match(v):
-            raise ValueError("Teléfono internacional inválido. Formato: +14155551234")
-        
-        return v
+        return _validate_phone_value(v)
     
     @field_validator("preferred_date")
     @classmethod
@@ -194,20 +176,57 @@ def validate_email(email: str, language: str = "es") -> tuple[bool, str | None]:
         return False, "Invalid email. Example: name@email.com"
 
 
+def _validate_phone_value(v: str) -> str:
+    """Lógica pura de validación + normalización de teléfono, reutilizable.
+
+    Normaliza a formato internacional E.164:
+      - Local venezolano  04141234567  → +584141234567
+      - VE sin '+'        584141234567 → +584141234567
+      - Internacional     +14155551234 → +14155551234
+
+    No depende de fecha/hora — a diferencia de construir un LeadValidator completo.
+    """
+    v = v.strip().replace(" ", "").replace("-", "")
+
+    # Local venezolano: 0XXXXXXXXXX (11 dígitos, ej: 0414/0412/0416/0424/0426) → +58XXXXXXXXXX
+    if v.isdigit() and len(v) == 11 and v.startswith("0"):
+        v = "+58" + v[1:]
+    # VE sin '+': 58XXXXXXXXXX → +58XXXXXXXXXX
+    elif v.startswith("58") and not v.startswith("+"):
+        v = "+" + v
+
+    # Formato venezolano (móvil: +58 4XX XXXXXXX)
+    if v.startswith("+58"):
+        if not PHONE_REGEX_VE.match(v):
+            raise ValueError(
+                "Teléfono venezolano inválido. Ejemplo: 04141234567 o +584141234567"
+            )
+        return v
+
+    # Formato internacional
+    if not v.startswith("+"):
+        v = "+" + v  # Intentar agregar +
+
+    if not PHONE_REGEX_INTL.match(v):
+        raise ValueError("Teléfono internacional inválido. Formato: +14155551234")
+
+    return v
+
+
 def validate_phone(phone: str, language: str = "es") -> tuple[bool, str | None]:
-    """Valida teléfono. Retorna (is_valid, error_message)."""
+    """Valida teléfono. Retorna (is_valid, error_message).
+
+    Valida el teléfono de forma aislada (sin fecha/hora), evitando el bug de
+    construir un LeadValidator con una fecha hardcodeada que caduca.
+    """
     try:
-        LeadValidator(name="Test", email="test@test.com", phone=phone,
-                     preferred_date="2026-12-31", preferred_time="10:00")
+        _validate_phone_value(phone)
         return True, None
-    except ValidationError as exc:
-        for err in exc.errors():
-            if err["loc"] == ("phone",):
-                msg = err["msg"]
-                if language == "es":
-                    return False, f"Teléfono inválido: {msg}"
-                return False, f"Invalid phone: {msg}"
-        return False, "Validation error"
+    except ValueError as e:
+        msg = str(e)
+        if language == "es":
+            return False, f"Teléfono inválido: {msg}"
+        return False, f"Invalid phone: {msg}"
 
 
 def validate_booking_datetime(

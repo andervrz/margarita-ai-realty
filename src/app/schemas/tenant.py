@@ -33,11 +33,11 @@ class TenantConfig(BaseModel):
 if __name__ == "__main__":
     print("🔥 Smoke Test — schemas/tenant.py")
     try:
-        TenantResponse(
+        TenantConfig(
             id="tenant-123",
             name="Esparta Inmuebles",
             slug="esparta",
-            plan="pro",
+            plan="plan-invalido",
             calendar_enabled=True,
             email_enabled=True,
             whatsapp_enabled=True,

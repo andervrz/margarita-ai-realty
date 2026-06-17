@@ -39,7 +39,7 @@ class EmailSMTPError(Exception):
 
 # ── Configuración ─────────────────────────────────────────────────
 
-
+settings = get_settings()
 
 
 # ── Función principal ─────────────────────────────────────────────
