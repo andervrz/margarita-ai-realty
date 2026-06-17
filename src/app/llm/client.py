@@ -21,6 +21,7 @@ from litellm import acompletion
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.exceptions import LLMError as DomainLLMError
 
 logger = get_logger(__name__)
 
@@ -53,8 +54,8 @@ class LLMProviderError(LLMError):
     pass
 
 
-class LLMNoProviderAvailable(Exception):
-    """Todos los providers del chain fallaron."""
+class LLMNoProviderAvailable(DomainLLMError):
+    """Todos los providers del chain fallaron (DomainError → HTTP 500)."""
     pass
 
 

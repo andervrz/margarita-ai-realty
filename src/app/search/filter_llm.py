@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.exceptions import LLMError
 from app.llm.client import chat_completion
 from app.schemas.search import FilterQuery
 
@@ -184,8 +185,8 @@ class _FilterLLMOutput(BaseModel):
 
 # ── Excepción de Dominio ──────────────────────────────────────────
 
-class LLMFilterExtractionError(Exception):
-    """Error en extracción de filtros vía LLM."""
+class LLMFilterExtractionError(LLMError):
+    """Error en extracción de filtros vía LLM (DomainError → HTTP 500)."""
     def __init__(
         self,
         message: str,

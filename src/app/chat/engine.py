@@ -355,6 +355,8 @@ async def process_message(
             tenant_id=tenant_id,
             user_content=user_message,
             assistant_content=response_data.final_text,
+            assistant_has_properties=search_result.total_found > 0,
+            assistant_property_count=search_result.total_found,
         )
     except SQLAlchemyError as exc:
         logger.exception(
@@ -857,12 +859,17 @@ async def _persist_messages(
     tenant_id: str,
     user_content: str,
     assistant_content: str,
+    *,
+    assistant_has_properties: bool = False,
+    assistant_property_count: int = 0,
 ) -> None:
     """Persiste par de mensajes (user + assistant) en DB.
 
-    created_at distintos (assistant +1ms) para garantizar el orden user→assistant
-    al restaurar desde DB: created_at es la única clave de orden y compartir el
-    mismo timestamp dejaba el orden del turno indeterminado.
+    - created_at distintos (assistant +1ms) para garantizar el orden
+      user→assistant al restaurar: created_at es la única clave de orden y
+      compartir el mismo timestamp dejaba el orden del turno indeterminado.
+    - Persiste has_properties/property_count del assistant para que la
+      compactación de contexto siga funcionando tras restaurar desde DB.
     """
     now = datetime.now(timezone.utc)
     user_ts = now.isoformat()
@@ -880,6 +887,8 @@ async def _persist_messages(
         tenant_id=tenant_id,
         role="assistant",
         content=assistant_content,
+        has_properties=assistant_has_properties,
+        property_count=assistant_property_count,
         created_at=assistant_ts,
     )
 

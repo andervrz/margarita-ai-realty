@@ -330,6 +330,10 @@ async def _load_from_db(
             "timestamp": msg.created_at
             if isinstance(msg.created_at, str)
             else msg.created_at.isoformat(),
+            # Metadata para que build_context_messages pueda compactar los
+            # listados de propiedades de turnos anteriores tras un restore.
+            "has_properties": bool(getattr(msg, "has_properties", False)),
+            "property_count": getattr(msg, "property_count", 0) or 0,
         }
         for msg in db_messages
     ]

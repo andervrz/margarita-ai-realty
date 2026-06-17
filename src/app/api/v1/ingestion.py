@@ -36,6 +36,7 @@ from app.api.middleware import get_current_tenant
 from app.core.logging import get_logger
 from app.db.engine import AsyncSessionLocal
 from app.db.models.ingestion_log import IngestionLog
+from app.exceptions import DomainError
 from app.ingestion.hasher import file_checksum
 from app.ingestion.parser import parse_properties_csv
 from app.ingestion.pipeline import IngestionPipeline
@@ -143,6 +144,10 @@ async def upload_csv(
                 file_content=content,
                 filename=filename,
             )
+    except DomainError:
+        # DomainError lleva su propio status_code → lo maneja
+        # domain_exception_handler (no enmascarar como 500 genérico).
+        raise
     except Exception as exc:
         logger.exception(
             "ingestion_pipeline_failed",

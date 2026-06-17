@@ -4,7 +4,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import CheckConstraint, ForeignKey, String, Text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import Index
 from app.db.base import Base
@@ -29,7 +29,13 @@ class Message(Base):
     
     role: Mapped[str] = mapped_column(String, nullable=False)  # user | assistant
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    
+
+    # Metadata para compactar el contexto al restaurar la sesión desde DB:
+    # un mensaje assistant que mostró propiedades se resume en lugar de
+    # reenviar el listado completo al LLM.
+    has_properties: Mapped[bool] = mapped_column(Boolean, default=False)
+    property_count: Mapped[int] = mapped_column(Integer, default=0)
+
     created_at: Mapped[str] = mapped_column(
         String, default=lambda: datetime.now(timezone.utc).isoformat()
     )

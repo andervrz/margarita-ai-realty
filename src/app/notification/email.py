@@ -27,13 +27,14 @@ from app.core.logging import get_logger
 from app.db.models.lead import Lead
 from app.db.models.property import Property
 from app.db.models.tenant import Tenant
+from app.exceptions import EmailError
 
 logger = get_logger(__name__)
 
 # ── Excepciones ───────────────────────────────────────────────────
 
-class EmailSMTPError(Exception):
-    """Error en comunicación SMTP."""
+class EmailSMTPError(EmailError):
+    """Error en comunicación SMTP (DomainError → HTTP 502)."""
     pass
 
 
