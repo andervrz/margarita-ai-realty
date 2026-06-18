@@ -11,7 +11,7 @@ Flujo de upload:
     2. Server calcula SHA-256 del archivo (idempotencia)
     3. Si checksum ya existe → retorna ingestion anterior sin re-procesar
     4. Parsea CSV → valida con PropertyCSVRow → upsert en DB
-    5. Genera embeddings sqlite-vec para propiedades nuevas/actualizadas
+    5. Genera embeddings pgvector para propiedades nuevas/actualizadas
     6. Guarda IngestionLog con estadísticas completas
     7. Retorna resumen: inserted, updated, skipped, failed
 
@@ -32,13 +32,14 @@ import json
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
-from src.app.api.middleware import get_current_tenant
-from src.app.core.logging import get_logger
-from src.app.db.engine import AsyncSessionLocal
-from src.app.db.models.ingestion_log import IngestionLog
-from src.app.ingestion.hasher import file_checksum
-from src.app.ingestion.parser import parse_properties_csv
-from src.app.ingestion.pipeline import IngestionPipeline
+from app.api.middleware import get_current_tenant
+from app.core.logging import get_logger
+from app.db.engine import AsyncSessionLocal
+from app.db.models.ingestion_log import IngestionLog
+from app.exceptions import DomainError
+from app.ingestion.hasher import file_checksum
+from app.ingestion.parser import parse_properties_csv
+from app.ingestion.pipeline import IngestionPipeline
 
 logger = get_logger(__name__)
 
@@ -143,6 +144,10 @@ async def upload_csv(
                 file_content=content,
                 filename=filename,
             )
+    except DomainError:
+        # DomainError lleva su propio status_code → lo maneja
+        # domain_exception_handler (no enmascarar como 500 genérico).
+        raise
     except Exception as exc:
         logger.exception(
             "ingestion_pipeline_failed",
@@ -167,7 +172,7 @@ async def upload_csv(
     )
 
     return IngestionResponse(
-        ingestion_id=result.filename,  # pipeline retorna IngestionResult con filename
+        ingestion_id=result.ingestion_id,  # id real del IngestionLog persistido
         filename=result.filename,
         file_checksum=checksum,
         status=result.status,
@@ -358,7 +363,7 @@ if __name__ == "__main__":
     print("✅ _parse_errors maneja todos los casos")
 
     # Test 5: file_checksum importado correctamente
-    from src.app.ingestion.hasher import file_checksum
+    from app.ingestion.hasher import file_checksum
     data = b"test csv content para margarita"
     c1 = file_checksum(data)
     c2 = file_checksum(data)
@@ -368,12 +373,12 @@ if __name__ == "__main__":
     print("✅ file_checksum determinístico y correcto")
 
     # Test 6: parse_properties_csv importado correctamente
-    from src.app.ingestion.parser import parse_properties_csv
+    from app.ingestion.parser import parse_properties_csv
     assert callable(parse_properties_csv)
     print("✅ parse_properties_csv importado correctamente")
 
     # Test 7: IngestionPipeline importado correctamente
-    from src.app.ingestion.pipeline import IngestionPipeline
+    from app.ingestion.pipeline import IngestionPipeline
     pipeline = IngestionPipeline()
     assert hasattr(pipeline, "process_csv")
     import inspect
@@ -381,13 +386,13 @@ if __name__ == "__main__":
     print("✅ IngestionPipeline con process_csv async")
 
     # Test 8: IngestionLog importado correctamente
-    from src.app.db.models.ingestion_log import IngestionLog
+    from app.db.models.ingestion_log import IngestionLog
     assert hasattr(IngestionLog, "errors_list"), \
         "IngestionLog debe tener property errors_list"
     print("✅ IngestionLog con errors_list property")
 
     # Test 9: AsyncSessionLocal importado correctamente
-    from src.app.db.engine import AsyncSessionLocal
+    from app.db.engine import AsyncSessionLocal
     assert AsyncSessionLocal is not None
     print("✅ AsyncSessionLocal importado correctamente")
 

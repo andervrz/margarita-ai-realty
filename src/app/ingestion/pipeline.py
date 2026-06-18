@@ -1,17 +1,17 @@
 # src/app/ingestion/pipeline.py
-"""Pipeline completo: parse → hash → upsert SQLite → embed sqlite-vec."""
+"""Pipeline completo: parse → hash → upsert SQLite → embed pgvector."""
 
 import json
 from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.db.models.ingestion_log import IngestionLog
-from src.app.db.models.property import Property
-from src.app.ingestion.embedder import embed_text, generate_raw_embed_text
-from src.app.ingestion.hasher import file_checksum, property_hash
-from src.app.ingestion.parser import parse_properties_csv
-from src.app.schemas.ingestion import IngestionResult, PropertyCSVRow
+from app.db.models.ingestion_log import IngestionLog
+from app.db.models.property import Property
+from app.ingestion.embedder import embed_text, generate_raw_embed_text
+from app.ingestion.hasher import file_checksum, property_hash
+from app.ingestion.parser import parse_properties_csv
+from app.schemas.ingestion import IngestionResult, PropertyCSVRow
 
 
 class IngestionPipeline:
@@ -36,15 +36,24 @@ class IngestionPipeline:
                 IngestionLog.file_checksum == checksum,
             )
         )
-        if existing_log.scalar_one_or_none():
+        prior = existing_log.scalar_one_or_none()
+        if prior:
+            # Archivo idéntico ya procesado: no re-insertamos, pero parseamos
+            # para reportar cuántas filas se omitieron (skipped) en vez de 0.
+            try:
+                valid_rows, parse_errors = parse_properties_csv(file_content, filename)
+                n_valid, n_failed = len(valid_rows), len(parse_errors)
+            except Exception:
+                n_valid, n_failed = 0, 0
             return IngestionResult(
+                ingestion_id=prior.id,
                 filename=filename,
-                total_rows=0,
-                valid_rows=0,
+                total_rows=n_valid + n_failed,
+                valid_rows=n_valid,
                 inserted_rows=0,
                 updated_rows=0,
-                skipped_rows=0,
-                failed_rows=0,
+                skipped_rows=n_valid,
+                failed_rows=n_failed,
                 errors=[],
                 status="skipped",  # archivo idéntico ya procesado
             )
@@ -63,6 +72,7 @@ class IngestionPipeline:
             session.add(log)
             await session.commit()
             return IngestionResult(
+                ingestion_id=log.id,
                 filename=filename,
                 total_rows=0, valid_rows=0, inserted_rows=0,
                 updated_rows=0, skipped_rows=0, failed_rows=0,
@@ -104,8 +114,9 @@ class IngestionPipeline:
         )
         session.add(log)
         await session.commit()
-        
+
         return IngestionResult(
+            ingestion_id=log.id,
             filename=filename,
             total_rows=len(valid_rows) + len(parse_errors),
             valid_rows=len(valid_rows),
@@ -153,20 +164,24 @@ class IngestionPipeline:
             )
             existing = result.scalar_one_or_none()
         
-        # Generar raw_embed_text
+        # Skip ANTES de generar el embedding: si la fila no cambió no hay que
+        # pagar la inferencia del modelo (era el costo que se desperdiciaba).
+        if existing and existing.property_hash == new_hash:
+            stats["skipped"] += 1
+            return
+
+        # Solo para filas nuevas o modificadas: texto + embedding pgvector.
         raw_text = generate_raw_embed_text(row_dict)
-        
+        embedding = await embed_text(raw_text)
+
         if existing:
-            if existing.property_hash == new_hash:
-                stats["skipped"] += 1
-                return
-            
             # Update
             for key, value in row_dict.items():
                 if hasattr(existing, key) and key not in ("id", "created_at"):
                     setattr(existing, key, value)
             existing.property_hash = new_hash
             existing.raw_embed_text = raw_text
+            existing.embedding = embedding
             existing.updated_at = datetime.now(timezone.utc).isoformat()
             stats["updated"] += 1
         else:
@@ -175,12 +190,11 @@ class IngestionPipeline:
                 tenant_id=tenant_id,
                 property_hash=new_hash,
                 raw_embed_text=raw_text,
+                embedding=embedding,
                 **{k: v for k, v in row_dict.items() if k != "tenant_id"},
             )
             session.add(new_prop)
             stats["inserted"] += 1
-        
-        # TODO: Actualizar sqlite-vec embeddings (Fase 2 completa)
 
 
 # ── Smoke Test ─────────────────────────────────────────────────────

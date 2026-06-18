@@ -21,9 +21,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.logging import get_logger
-from src.app.db.models.message import Message
-from src.app.db.models.session import Session as SessionModel
+from app.core.logging import get_logger
+from app.db.models.message import Message
+from app.db.models.session import Session as SessionModel
 
 logger = get_logger(__name__)
 
@@ -48,6 +48,22 @@ class SessionMemory:
     qualification_score: int = 0
     is_booking_active: bool = False
     booking_step: str | None = None
+    # Datos capturados durante el flujo de booking (name, phone, email,
+    # preferred_date). Se vacía al persistir el lead. RAM-only en V1.
+    booking_data: dict[str, Any] = field(default_factory=dict)
+    # Propiedades mostradas más recientemente (en foco). Permite que los
+    # follow-ups sin términos de búsqueda ("me gusta la de $400", "agendar
+    # visita") sigan teniendo contexto del catálogo. RAM-only en V1.
+    last_properties: list[dict[str, Any]] = field(default_factory=list)
+    # Operación recordada (venta/arriendo) entre turnos: si el usuario dijo
+    # "comprar" una vez, los turnos siguientes que aporten zona/tipo/precio sin
+    # repetir la operación la heredan, para no mezclar venta con alquiler.
+    # RAM-only en V1.
+    sticky_operation: list[str] | None = None
+    # True una vez que el usuario completó un booking en la sesión: evita
+    # re-activar el flujo por score alto y dejar de insistir con preguntas de
+    # calificación tras agendar. RAM-only en V1.
+    booking_completed: bool = False
     created_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
@@ -61,7 +77,7 @@ class SessionMemory:
 
     def add_message(self, role: str, content: str, **extra: Any) -> None:
         """Agrega mensaje con cap de memoria para evitar crecimiento infinito."""
-        from src.app.core.config import get_settings
+        from app.core.config import get_settings
         settings = get_settings()
 
         self.touch()
@@ -97,7 +113,7 @@ async def get_session_memory(
       4. Si no existe → crear nueva
     """
     async with _session_locks[session_id]:
-        from src.app.core.config import get_settings
+        from app.core.config import get_settings
         settings = get_settings()
         now = datetime.now(timezone.utc)
 
@@ -176,18 +192,6 @@ async def save_session_memory(
     )
 
 
-async def delete_session_memory(session_id: str) -> None:
-    """Elimina sesión del store RAM explícitamente."""
-    async with _store_lock:
-        session_store.pop(session_id, None)
-    logger.info("session_removed_from_ram", session_id=session_id)
-
-
-def get_active_session_count() -> int:
-    """Número de sesiones activas en RAM."""
-    return len(session_store)
-
-
 def build_context_messages(
     memory: SessionMemory,
     max_messages: int | None = None,
@@ -199,7 +203,7 @@ def build_context_messages(
     - Mensajes anteriores con propiedades se compactan en referencia
     - El último mensaje assistant conserva contenido completo
     """
-    from src.app.core.config import get_settings
+    from app.core.config import get_settings
     settings = get_settings()
 
     limit = max_messages or settings.max_messages_in_context
@@ -243,7 +247,7 @@ async def cleanup_expired_sessions() -> None:
     Llamar desde lifespan de FastAPI como asyncio.create_task().
     """
     global _cleanup_running
-    from src.app.core.config import get_settings
+    from app.core.config import get_settings
 
     if _cleanup_running:
         logger.warning("cleanup_already_running")
@@ -306,7 +310,7 @@ async def _load_from_db(
     tenant_id: str,
 ) -> SessionMemory | None:
     """Restaura sesión y mensajes desde SQLite."""
-    from src.app.core.config import get_settings
+    from app.core.config import get_settings
     settings = get_settings()
 
     result = await session.execute(
@@ -335,6 +339,10 @@ async def _load_from_db(
             "timestamp": msg.created_at
             if isinstance(msg.created_at, str)
             else msg.created_at.isoformat(),
+            # Metadata para que build_context_messages pueda compactar los
+            # listados de propiedades de turnos anteriores tras un restore.
+            "has_properties": bool(getattr(msg, "has_properties", False)),
+            "property_count": getattr(msg, "property_count", 0) or 0,
         }
         for msg in db_messages
     ]
@@ -458,13 +466,6 @@ if __name__ == "__main__":
         ctx_lim = build_context_messages(many, max_messages=5)
         assert len(ctx_lim) == 5
         print("✅ Límite de mensajes respetado")
-
-        # Test 7: get_active_session_count
-        initial = get_active_session_count()
-        session_store["test-s"] = SessionMemory("test-s", "t1")
-        assert get_active_session_count() == initial + 1
-        del session_store["test-s"]
-        print("✅ get_active_session_count")
 
         # Test 8: El último mensaje assistant NO se compacta
         mem_last = SessionMemory(

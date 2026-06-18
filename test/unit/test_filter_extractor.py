@@ -60,19 +60,29 @@ def test_extract_zone_la_asuncion():
 
 
 def test_extract_property_type_apartamento():
-    """Detecta tipo apartamento."""
+    """'apartamento' es tipo de vivienda → dwelling_type, no property_type."""
     from app.search.filter_extractor import extract_filters
     f = extract_filters("busco apartamento de 3 habitaciones")
-    assert f.property_type is not None
-    assert "apartamento" in f.property_type
+    assert f.dwelling_type is not None
+    assert "apartamento" in f.dwelling_type
+    # property_type (operación) no debe contaminarse con la vivienda
+    assert not f.property_type
 
 
 def test_extract_property_type_synonym_apto():
-    """Detecta sinónimo 'apto' → 'apartamento'."""
+    """Sinónimo 'apto' → 'apartamento' cae en dwelling_type."""
     from app.search.filter_extractor import extract_filters
     f = extract_filters("apto 2H en Porlamar")
-    assert f.property_type is not None
-    assert "apartamento" in f.property_type
+    assert f.dwelling_type is not None
+    assert "apartamento" in f.dwelling_type
+
+
+def test_extract_operation_vs_dwelling_split():
+    """Operación y vivienda se separan en campos distintos."""
+    from app.search.filter_extractor import extract_filters
+    f = extract_filters("apartamento en arriendo en Pampatar")
+    assert f.dwelling_type == ["apartamento"]
+    assert f.property_type == ["arriendo"]
 
 
 def test_extract_bedrooms():

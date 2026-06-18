@@ -33,7 +33,7 @@ async def test_post_chat_returns_response(http_client):
         mock_ac.return_value = mock_resp
 
         response = await http_client.post(
-            "/api/v1",
+            "/api/v1/chat",
             json={"message": "hola, busco apartamento"},
             headers={"X-Session-Id": "e2e-session-001"},
         )
@@ -48,7 +48,7 @@ async def test_post_chat_returns_response(http_client):
 async def test_post_chat_empty_message_rejected(http_client):
     """POST con mensaje vacío → 422 (validación Pydantic)."""
     response = await http_client.post(
-        "/api/v1",
+        "/api/v1/chat",
         json={"message": ""},
     )
     assert response.status_code == 422
@@ -57,7 +57,7 @@ async def test_post_chat_empty_message_rejected(http_client):
 async def test_post_chat_message_too_long(http_client):
     """POST con mensaje > 2000 chars → 422."""
     response = await http_client.post(
-        "/api/v1",
+        "/api/v1/chat",
         json={"message": "x" * 2001},
     )
     assert response.status_code == 422
@@ -74,12 +74,12 @@ async def test_post_chat_session_continuity(http_client):
         mock_ac.return_value = mock_resp
 
         r1 = await http_client.post(
-            "/api/v1",
+            "/api/v1/chat",
             json={"message": "hola"},
             headers={"X-Session-Id": session_id},
         )
         r2 = await http_client.post(
-            "/api/v1",
+            "/api/v1/chat",
             json={"message": "busco apartamento"},
             headers={"X-Session-Id": session_id},
         )
@@ -99,7 +99,7 @@ async def test_post_chat_qualification_score_in_response(http_client):
         mock_ac.return_value = mock_resp
 
         response = await http_client.post(
-            "/api/v1",
+            "/api/v1/chat",
             json={"message": "tengo $200k para invertir en Pampatar"},
         )
 

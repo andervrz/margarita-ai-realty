@@ -22,11 +22,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.db.models.lead import Lead
-from src.app.schemas.lead import LeadCreate
-from src.app.core.constants import LeadStatus
+from app.core.logging import get_logger
+from app.db.models.lead import Lead
+from app.schemas.lead import LeadCreate
+from app.core.constants import LeadStatus
 
 logger = get_logger(__name__)
 
@@ -85,6 +84,65 @@ async def create_lead(
     return lead
 
 
+async def create_lead_from_booking(
+    session: AsyncSession,
+    *,
+    session_id: str,
+    tenant_id: str,
+    name: str,
+    email: str,
+    phone: str,
+    preferred_date: str = "Por confirmar",
+    preferred_time: str = "Por confirmar",
+    visit_duration_minutes: int = 60,
+    property_id: str | None = None,
+    qualification_score: int | None = None,
+    is_international: bool = False,
+    notes: str | None = None,
+) -> Lead:
+    """Crea un lead desde el booking conversacional simplificado.
+
+    A diferencia de create_lead(), NO exige fecha/hora válidas: en el flujo
+    simplificado la fecha es opcional ('Por confirmar') y no se pide hora.
+    El nombre/email/teléfono ya vienen validados desde el engine.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    lead = Lead(
+        session_id=session_id,
+        tenant_id=tenant_id,
+        property_id=property_id,
+        name=name,
+        email=email,
+        phone=phone,
+        preferred_date=preferred_date,
+        preferred_time=preferred_time,
+        visit_duration_minutes=visit_duration_minutes,
+        notes=notes,
+        qualification_score=qualification_score,
+        is_international=is_international,
+        status=LeadStatus.PENDIENTE.value,
+        created_at=now,
+        updated_at=now,
+    )
+
+    session.add(lead)
+    await session.commit()
+    await session.refresh(lead)
+
+    logger.info(
+        "lead_created_from_booking",
+        lead_id=str(lead.id),
+        tenant_id=tenant_id,
+        session_id=session_id,
+        name=name,
+        property_id=property_id,
+        score=qualification_score,
+    )
+
+    return lead
+
+
 async def get_lead_by_id(
     session: AsyncSession,
     lead_id: str,
@@ -112,31 +170,6 @@ async def get_leads_by_session(
             Lead.tenant_id == tenant_id,
         ).order_by(Lead.created_at.desc())
     )
-    return list(result.scalars().all())
-
-
-async def get_leads_by_tenant(
-    session: AsyncSession,
-    tenant_id: str,
-    status: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> list[Lead]:
-    """Obtiene leads de un tenant con filtros opcionales.
-    
-    Args:
-        status: Filtrar por estado ('pendiente', 'confirmado', 'cancelado', etc.).
-        limit: Máximo de resultados (paginación).
-        offset: Offset para paginación.
-    """
-    stmt = select(Lead).where(Lead.tenant_id == tenant_id)
-    
-    if status:
-        stmt = stmt.where(Lead.status == status)
-    
-    stmt = stmt.order_by(Lead.created_at.desc()).limit(limit).offset(offset)
-    
-    result = await session.execute(stmt)
     return list(result.scalars().all())
 
 
@@ -196,70 +229,10 @@ async def update_lead_status(
     return lead
 
 
-async def cancel_lead(
-    session: AsyncSession,
-    lead_id: str,
-    tenant_id: str,
-) -> Lead | None:
-    """Cancela un lead (soft delete)."""
-    return await update_lead_status(
-        session=session,
-        lead_id=lead_id,
-        tenant_id=tenant_id,
-        new_status="cancelado",
-    )
-
-
-async def get_lead_stats(
-    session: AsyncSession,
-    tenant_id: str,
-) -> dict[str, Any]:
-    """Retorna estadísticas de leads por tenant.
-    
-    Útil para dashboard admin y métricas de negocio.
-    """
-    from sqlalchemy import func
-    
-    # Total por estado
-    stmt = (
-        select(Lead.status, func.count(Lead.id))
-        .where(Lead.tenant_id == tenant_id)
-        .group_by(Lead.status)
-    )
-    result = await session.execute(stmt)
-    status_counts = {row[0]: row[1] for row in result.all()}
-    
-    # Total general
-    total = sum(status_counts.values())
-    
-    # Promedio qualification_score
-    avg_stmt = select(func.avg(Lead.qualification_score)).where(
-        Lead.tenant_id == tenant_id
-    )
-    avg_result = await session.execute(avg_stmt)
-    avg_score = avg_result.scalar() or 0
-    
-    # Compradores internacionales
-    intl_stmt = select(func.count(Lead.id)).where(
-        Lead.tenant_id == tenant_id,
-        Lead.is_international == True,
-    )
-    intl_result = await session.execute(intl_stmt)
-    intl_count = intl_result.scalar() or 0
-    
-    return {
-        "total": total,
-        "by_status": status_counts,
-        "average_score": round(float(avg_score), 2),
-        "international_count": intl_count,
-        "international_percentage": round((intl_count / total * 100), 2) if total > 0 else 0,
-    }
-
-
 # ── Smoke Test ────────────────────────────────────────────────────
 if __name__ == "__main__":
     import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import MagicMock
     
     async def _test():
         print("🔥 Smoke Test — leads/service.py")
@@ -295,15 +268,7 @@ if __name__ == "__main__":
         assert "whatsapp_sent" in sig.parameters
         assert "email_sent" in sig.parameters
         print("  ✅ update_lead_status tiene parámetros de tracking")
-        
-        # Test 4: cancel_lead es soft delete
-        assert inspect.iscoroutinefunction(cancel_lead)
-        print("  ✅ cancel_lead es soft delete (status='cancelado')")
-        
-        # Test 5: get_lead_stats retorna dict
-        assert inspect.iscoroutinefunction(get_lead_stats)
-        print("  ✅ get_lead_stats es async")
-        
+
         # Test 6: Tenant isolation en queries
         # Verificamos que todas las funciones reciben tenant_id
         assert "tenant_id" in sig.parameters

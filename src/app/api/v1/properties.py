@@ -3,7 +3,7 @@
 
 Endpoints:
     GET /properties          → Listar propiedades del tenant (con filtros)
-    GET /properties/search   → Búsqueda híbrida (SQL + sqlite-vec)
+    GET /properties/search   → Búsqueda híbrida (SQL + pgvector)
     GET /properties/{id}     → Ver detalle de una propiedad
 
 IMPORTANTE: /search debe estar ANTES de /{property_id} en el router
@@ -26,10 +26,10 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.app.api.middleware import get_current_tenant
-from src.app.core.logging import get_logger
-from src.app.db.engine import AsyncSessionLocal
-from src.app.db.models.property import Property
+from app.api.middleware import get_current_tenant
+from app.core.logging import get_logger
+from app.db.engine import AsyncSessionLocal
+from app.db.models.property import Property
 
 logger = get_logger(__name__)
 
@@ -78,7 +78,7 @@ class PropertySearchResult(BaseModel):
     # Evitar alias="property" — property es builtin de Python
     # y causa conflictos en Pydantic v2 serialización
     prop: PropertyListItem
-    search_source: str = Field(..., description="sql | sqlite_vec | mixed | no_results")
+    search_source: str = Field(..., description="sql | vec | mixed | no_results")
     total_found: int = 0
 
 
@@ -90,7 +90,7 @@ async def search_properties(
     tenant: dict = Depends(get_current_tenant),
     limit: int = Query(3, ge=1, le=10),
 ) -> PropertySearchResult:
-    """Búsqueda híbrida SQL + sqlite-vec con lenguaje natural.
+    """Búsqueda híbrida SQL + pgvector con lenguaje natural.
 
     Ejemplo:
         GET /properties/search?q=apartamento+3+habitaciones+Pampatar+vista+al+mar
@@ -98,10 +98,8 @@ async def search_properties(
     Nota: Registrado ANTES de /{property_id} para que FastAPI
     no interprete la literal "search" como un property_id.
     """
-    from sqlalchemy.ext.asyncio import AsyncSession
 
-    from src.app.schemas.search import FilterQuery
-    from src.app.search.hybrid import hybrid_search
+    from app.search.hybrid import hybrid_search
 
     tenant_id = tenant["id"]
     logger.info("properties_search", tenant_id=tenant_id, query=q[:100])

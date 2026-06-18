@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from sqlalchemy import ForeignKey, CheckConstraint, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import Index, Boolean
-from src.app.db.base import Base
-from src.app.core.constants import Language
+from app.db.base import Base
+from app.core.constants import Language
 
 class Session(Base):
     """Sesión de chat con estado de calificación y booking."""
@@ -18,7 +18,8 @@ class Session(Base):
     __table_args__ = (
         Index("idx_sessions_tenant_active", "tenant_id", "last_active_at"),
         CheckConstraint(
-        "booking_step IN ('name', 'email', 'phone', 'date', 'time', 'notes', 'confirm') OR booking_step IS NULL",
+        # Pasos del flujo simplificado (ES usa 'nombre', EN usa 'name').
+        "booking_step IN ('name', 'nombre', 'phone', 'email', 'date', 'confirm') OR booking_step IS NULL",
         name="ck_session_booking_step"
         )
     )

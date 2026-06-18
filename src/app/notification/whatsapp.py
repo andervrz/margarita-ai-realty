@@ -18,19 +18,20 @@ from __future__ import annotations
 
 import httpx
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.db.models.lead import Lead
-from src.app.db.models.property import Property
-from src.app.db.models.tenant import Tenant
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.db.models.lead import Lead
+from app.db.models.property import Property
+from app.db.models.tenant import Tenant
+from app.exceptions import WhatsAppError
 
 logger = get_logger(__name__)
 
 
 # ── Excepciones ───────────────────────────────────────────────────
 
-class WhatsAppAPIError(Exception):
-    """Error en comunicación con Meta WhatsApp Cloud API."""
+class WhatsAppAPIError(WhatsAppError):
+    """Error en comunicación con Meta WhatsApp Cloud API (DomainError → HTTP 502)."""
     pass
 
 

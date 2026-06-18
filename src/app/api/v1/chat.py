@@ -28,11 +28,12 @@ import uuid
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from src.app.api.middleware import get_current_tenant
-from src.app.chat.engine import process_message
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.db.engine import AsyncSessionLocal
+from app.api.middleware import _DEV_TENANT, _lookup_tenant, get_current_tenant
+from app.chat.engine import process_message
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.core.security import hash_api_key
+from app.db.engine import AsyncSessionLocal
 
 logger = get_logger(__name__)
 
@@ -95,6 +96,7 @@ class ChatResponseSchema(BaseModel):
     content: str
     session_id: str
     properties: list[dict] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
     qualification_score: int = Field(default=0)
     qualification_stage: str = Field(default="explore")
     booking_step: str | None = Field(default=None)
@@ -104,24 +106,44 @@ class ChatResponseSchema(BaseModel):
 
 # ── WebSocket Endpoint ────────────────────────────────────────────
 
+async def _resolve_ws_tenant(websocket: WebSocket) -> dict | None:
+    """Resuelve el tenant para WebSocket.
+
+    El TenantMiddleware (HTTP) no corre en conexiones WS, así que la auth se
+    hace aquí. Dev: DEV_TENANT (sin auth). Prod: ?api_key= en el query string.
+    Devuelve None si no se puede autenticar (el endpoint cierra la conexión).
+    """
+    if get_settings().app_env == "development":
+        return _DEV_TENANT
+    api_key = websocket.query_params.get("api_key")
+    if not api_key:
+        return None
+    return await _lookup_tenant(websocket, hash_api_key(api_key))
+
+
 @router.websocket("/ws/chat/{session_id}")
 async def websocket_chat(
     websocket: WebSocket,
     session_id: str,
-    tenant: dict = Depends(get_current_tenant),
 ) -> None:
     """Endpoint WebSocket para chat en tiempo real.
 
     El cliente debe enviar JSON: {"message": "texto del usuario"}
     El server responde con JSON estructurado: {"type": "response", ...}
     Heartbeat: ping cada 30s, pong esperado en 10s.
+    En producción requiere ?api_key=<tenant key> en la URL.
     """
+    tenant = await _resolve_ws_tenant(websocket)
+    if tenant is None:
+        await websocket.close(code=1008)  # Policy Violation: sin/invalid api_key
+        return
+
     settings = get_settings()
     await manager.connect(session_id, websocket)
 
     # Saludo inicial si es sesión nueva — usamos DB para verificar
     async with AsyncSessionLocal() as session:
-        from src.app.chat.memory import get_session_memory
+        from app.chat.memory import get_session_memory
         memory = await get_session_memory(
             session=session,
             session_id=session_id,
@@ -141,6 +163,7 @@ async def websocket_chat(
             "booking_step": None,
             "language": "es",
             "properties": [],
+            "suggestions": ["🏠 Comprar", "🔑 Alquilar", "Ver propiedades"],
         })
 
     heartbeat_task: asyncio.Task | None = None
@@ -206,7 +229,8 @@ async def websocket_chat(
                 "type": "response",
                 "content": engine_response.text,
                 "session_id": session_id,
-                "properties": [],  # TODO: incluir cuando SearchResult exponga lista pública
+                "properties": engine_response.properties,
+                "suggestions": engine_response.suggestions,
                 "qualification_score": engine_response.qualification_score,
                 "qualification_stage": engine_response.qualification_stage,
                 "is_booking_active": engine_response.is_booking_active,
@@ -258,7 +282,7 @@ async def _heartbeat(
 
 # ── POST Fallback Endpoint ────────────────────────────────────────
 
-@router.post("", response_model=ChatResponseSchema)
+@router.post("/chat", response_model=ChatResponseSchema)
 async def http_chat(
     request: Request,
     payload: ChatRequest,
@@ -299,6 +323,8 @@ async def http_chat(
         type="response",
         content=engine_response.text,
         session_id=session_id,
+        properties=engine_response.properties,
+        suggestions=engine_response.suggestions,
         qualification_score=engine_response.qualification_score,
         qualification_stage=engine_response.qualification_stage,
         is_booking_active=engine_response.is_booking_active,
@@ -312,16 +338,19 @@ async def http_chat(
 def _build_greeting(tenant: dict, language: str = "es") -> str:
     """Construye saludo inicial personalizado."""
     name = tenant.get("name", "nuestro asistente")
+    # Evitar "...Margarita en Margarita": solo añadir la ubicación si el
+    # nombre del tenant no la menciona ya.
+    mentions_location = "margarita" in name.lower()
     if language == "en":
+        location = "" if mentions_location else " in Margarita"
         return (
-            f"Hello! I'm the virtual assistant for {name}. 🏝️\n\n"
-            f"What type of property are you looking for in Margarita? "
-            f"I can help you find apartments, houses, commercial spaces or land."
+            f"Hello! I'm the virtual assistant for {name}{location}. 🏝️\n\n"
+            f"To get started — are you looking to buy or rent?"
         )
+    location = "" if mentions_location else " en Margarita"
     return (
-        f"¡Hola! Soy el asistente virtual de {name}. 🏝️\n\n"
-        f"¿Qué tipo de propiedad estás buscando en Margarita? "
-        f"Puedo ayudarte a encontrar apartamentos, casas, locales o terrenos."
+        f"¡Hola! Soy el asistente virtual de {name}{location}. 🏝️\n\n"
+        f"Para empezar — ¿estás buscando comprar o alquilar?"
     )
 
 

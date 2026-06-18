@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 
 from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import Index, func
+from sqlalchemy import Index
 from sqlalchemy import Boolean
-from src.app.db.base import Base
-from src.app.core.constants import LeadStatus
+from app.db.base import Base
+from app.core.constants import LeadStatus
 
 class Lead(Base):
     """Lead capturado al momento de agendar visita."""

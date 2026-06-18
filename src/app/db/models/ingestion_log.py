@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 import json
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text
-from src.app.db.base import Base
-from src.app.core.constants import IngestionStatus
+from app.db.base import Base
+from app.core.constants import IngestionStatus
 
 
 

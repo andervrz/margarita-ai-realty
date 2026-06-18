@@ -2,22 +2,12 @@
 """Seguridad: hashing de API keys, generación, verificación.
 
 API keys se hashean con SHA-256 para lookup rápido en DB.
-Para storage de secrets sensibles se usa bcrypt via passlib.
+El API key en sí nunca se almacena en texto plano.
 """
 
 import hashlib
 import secrets
-from passlib.context import CryptContext
 
-# Contexto bcrypt para hashing de passwords/secrets
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def hash_api_key(api_key: str, secret_key: str) -> str:
-    return hmac.new(
-        secret_key.encode(),
-        api_key.encode(),
-        hashlib.sha256
-    ).hexdigest()
 
 def hash_api_key(api_key: str) -> str:
     """Hash de API key con SHA-256 para lookup en base de datos.
@@ -44,16 +34,6 @@ def generate_api_key() -> str:
     return f"pk_live_{token}"
 
 
-def hash_password(password: str) -> str:
-    """Hash de password con bcrypt (para credenciales de admin si aplica)."""
-    return pwd_context.hash(password)
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verifica un password contra su hash bcrypt."""
-    return pwd_context.verify(plain_password, hashed_password)
-
-
 # ── Smoke Test ─────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("🔥 Smoke Test — security.py")
@@ -76,12 +56,5 @@ if __name__ == "__main__":
     assert verify_api_key(key1, hashed) is True
     assert verify_api_key("key-falsa", hashed) is False
     print("  ✅ verify_api_key: match y no-match correctos")
-    
-    # Test hash_password / verify_password
-    password = "mi-password-secreto-123"
-    hashed_pw = hash_password(password)
-    assert verify_password(password, hashed_pw) is True
-    assert verify_password("wrong", hashed_pw) is False
-    print("  ✅ bcrypt password: hash y verify correctos")
-    
+
     print("\n🎉 Todos los smoke tests pasaron")

@@ -6,8 +6,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import CheckConstraint, Integer, String, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
-from src.app.core.constants import Plan
-from src.app.db.base import Base
+from app.db.base import Base
 
 
 class Tenant(Base):

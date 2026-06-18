@@ -6,7 +6,7 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from src.app.core.constants import LeadStatus
+from app.core.constants import LeadStatus
 
 
 class BookingData(BaseModel):
@@ -51,31 +51,6 @@ class LeadCreate(BookingData):
     tenant_id: str
     qualification_score: int | None = None
     is_international: bool = False
-
-
-class LeadResponse(BaseModel):
-    """Respuesta pública de un lead — construida desde ORM."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    session_id: str
-    tenant_id: str
-    property_id: str | None
-    name: str
-    email: str
-    phone: str
-    preferred_date: str
-    preferred_time: str
-    visit_duration_minutes: int
-    notes: str | None
-    qualification_score: int | None
-    is_international: bool
-    status: LeadStatus
-    calendar_event_id: str | None
-    whatsapp_sent: bool
-    email_sent: bool
-    created_at: str
 
 
 # ── Smoke Test ─────────────────────────────────────────────────────

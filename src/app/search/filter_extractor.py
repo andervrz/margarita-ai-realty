@@ -19,19 +19,26 @@ from __future__ import annotations
 
 import re
 
-from src.app.schemas.search import FilterQuery
+from app.schemas.search import FilterQuery
 
 
 # ── Zonas de Margarita ────────────────────────────────────────────
 
 MARGARITA_ZONES_CANONICAL = [
-    "pampatar", "porlamar", "el agua", "guacuco", "el yaque",
+    # Zonas CON propiedades en el catálogo. Cada canónica debe ser substring del
+    # location_zone real (el SQL filtra con ILIKE %zona%), por eso se incluyen
+    # variantes cortas: "el angel" ⊂ "Playa El Angel", "tirano" ⊂ "Playa Tirano".
+    "pampatar", "porlamar", "costa azul", "playa moreno",
+    "playa el angel", "el angel", "maneiro",
+    "el agua", "guacuco", "el yaque", "playa tirano", "tirano",
     "playa caribe", "playa parguito", "manzanillo",
-    "casa de campo", "country club", "paraíso", "paraiso",
+    "juan griego", "la asunción", "la asuncion",
+    "paraíso", "paraiso",
+    # Zonas/sectores adicionales de Margarita (sin propiedades aún, pero válidas).
+    "casa de campo", "country club",
     "puerto real", "santa ana del norte",
     "sabana de guacuco", "rancho de chana", "cerro guayamuri",
     "las hernández", "las hernandez", "chana",
-    "juan griego", "la asunción", "la asuncion",
     "margarita", "nueva esparta",
 ]
 
@@ -48,19 +55,43 @@ MARGARITA_ZONES_NORMALIZED = [_normalize_zone(z) for z in MARGARITA_ZONES_CANONI
 
 
 # ── Tipos de Propiedad ────────────────────────────────────────────
+# Dos conceptos distintos que ANTES se mezclaban en property_type:
+#   - OPERATION_TYPES: tipo de operación/categoría. Se guarda en la columna
+#     Property.property_type (CheckConstraint la limita a estos valores).
+#   - DWELLING_TYPES: tipo de vivienda. NO existe como columna estructurada;
+#     vive en el título/descripción, así que se matchea por texto (ILIKE).
 
-PROPERTY_TYPES_CANONICAL = [
+OPERATION_TYPES_CANONICAL = [
     "venta", "arriendo", "vacacional", "local",
     "posada", "hotel", "planos", "terreno",
-    "apartamento", "casa", "villa", "townhouse",
 ]
 
+DWELLING_TYPES_CANONICAL = [
+    "apartamento", "casa", "villa", "townhouse", "penthouse",
+]
+
+# Unión — usada para escanear el query (sinónimos + canónicos).
+PROPERTY_TYPES_CANONICAL = OPERATION_TYPES_CANONICAL + DWELLING_TYPES_CANONICAL
+
+_OPERATION_TYPES_SET = set(OPERATION_TYPES_CANONICAL)
+_DWELLING_TYPES_SET = set(DWELLING_TYPES_CANONICAL)
+
 PROPERTY_TYPE_SYNONYMS: dict[str, str] = {
+    "comprar": "venta",
+    "compra": "venta",
+    "comprando": "venta",
+    "buy": "venta",
+    "buying": "venta",
     "alquiler": "arriendo",
+    "alquilar": "arriendo",
+    "arrendar": "arriendo",
+    "rentar": "arriendo",
     "renta": "arriendo",
     "rent": "arriendo",
     "apto": "apartamento",
     "depto": "apartamento",
+    "ph": "penthouse",
+    "pent-house": "penthouse",
     "comercial": "local",
     "locales": "local",
     "oficina": "local",
@@ -74,15 +105,37 @@ PROPERTY_TYPE_SYNONYMS: dict[str, str] = {
 }
 
 
+def split_property_terms(
+    terms: list[str] | None,
+) -> tuple[list[str] | None, list[str] | None]:
+    """Separa términos en (operaciones, viviendas).
+
+    Fuente de verdad compartida por el extractor regex y el LLM. Los términos
+    desconocidos se ignoran (no se fuerzan a ninguna de las dos columnas).
+
+    Returns:
+        (property_type, dwelling_type) — cada uno ordenado o None si vacío.
+    """
+    if not terms:
+        return None, None
+    operations = sorted({t for t in terms if t in _OPERATION_TYPES_SET})
+    dwellings = sorted({t for t in terms if t in _DWELLING_TYPES_SET})
+    return (operations or None), (dwellings or None)
+
+
 # ── Patrones de Precio ────────────────────────────────────────────
 
+# El sufijo multiplicador (k|mil) debe quedar DENTRO del grupo de captura para que
+# _parse_price_number pueda aplicarlo. \b evita falsos positivos ("100 km" ≠ 100k).
+_NUM = r"([\d\.,]+(?:\s*(?:k|mil|usd|dólares)\b)?)"
+
 PRICE_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"entre\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?\s+(?:y|and|-)\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?", re.I), "range"),
-    (re.compile(r"(?:hasta|máximo|maximo|max|menos de|under|up to|below)\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd|dólares)?", re.I), "max"),
-    (re.compile(r"[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?\s*(?:máximo|maximo|max|o menos|or less)", re.I), "max"),
-    (re.compile(r"(?:desde|mínimo|minimo|min|más de|more than|over|above|from)\s*[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd|dólares)?", re.I), "min"),
-    (re.compile(r"[\$]?\s*([\d\.,]+)\s*(?:k|mil|usd)?\s*(?:mínimo|minimo|min|o más|or more)", re.I), "min"),
-    (re.compile(r"[\$]\s*([\d\.,]+)\s*(?:k|mil|usd|dólares)?\b", re.I), "exact"),
+    (re.compile(rf"entre\s*[\$]?\s*{_NUM}\s+(?:y|and|-)\s*[\$]?\s*{_NUM}", re.I), "range"),
+    (re.compile(rf"(?:hasta|máximo|maximo|max|menos de|under|up to|below)\s*[\$]?\s*{_NUM}", re.I), "max"),
+    (re.compile(rf"[\$]?\s*{_NUM}\s*(?:máximo|maximo|max|o menos|or less)", re.I), "max"),
+    (re.compile(rf"(?:desde|mínimo|minimo|min|más de|more than|over|above|from)\s*[\$]?\s*{_NUM}", re.I), "min"),
+    (re.compile(rf"[\$]?\s*{_NUM}\s*(?:mínimo|minimo|min|o más|or more)", re.I), "min"),
+    (re.compile(rf"[\$]\s*{_NUM}\b", re.I), "exact"),
 ]
 
 ROOM_PATTERNS = {
@@ -297,16 +350,29 @@ def _extract_zone(query_norm: str) -> str | None:
     return None
 
 
+def _contains_word_plural(text: str, term: str) -> bool:
+    """Como _contains_word pero tolera el plural español del término.
+
+    "casa"→"casas", "apartamento"→"apartamentos", "local"→"locales",
+    "hotel"→"hoteles", "terreno"→"terrenos". El sufijo opcional (?:e?s)?
+    cubre tanto -s como -es sin abrir falsos positivos (mantiene \\b).
+    """
+    return re.search(rf"\b{re.escape(term)}(?:e?s)?\b", text) is not None
+
+
 def _extract_property_types(query_norm: str) -> list[str] | None:
-    """Extrae tipos de propiedad, mapeando sinónimos a canónicos."""
+    """Extrae tipos de propiedad, mapeando sinónimos a canónicos.
+
+    Tolerante a plural ("casas", "apartamentos") — la forma más natural de pedir.
+    """
     found: set[str] = set()
 
     for synonym, canonical in PROPERTY_TYPE_SYNONYMS.items():
-        if synonym in query_norm:
+        if _contains_word_plural(query_norm, synonym):
             found.add(canonical)
 
     for ptype in PROPERTY_TYPES_CANONICAL:
-        if ptype in query_norm:
+        if _contains_word_plural(query_norm, ptype):
             found.add(ptype)
 
     return sorted(list(found)) if found else None
@@ -317,9 +383,11 @@ def _extract_boolean_flags(query_norm: str) -> dict[str, bool | None]:
     Extrae flags booleanos con lógica positivo/negativo.
 
     Reglas:
-    - keyword positivo Y NO negativo → True
-    - keyword negativo Y NO positivo → False
-    - ambos o ninguno → None (delegar a LLM)
+    - keyword negativo → False (precedencia: las frases negativas como
+      "sin vista al mar" contienen el positivo "vista al mar" como substring,
+      así que la negación debe ganar)
+    - keyword positivo y sin negativo → True
+    - ninguno → None (delegar a LLM)
     """
     result: dict[str, bool | None] = {}
 
@@ -327,10 +395,10 @@ def _extract_boolean_flags(query_norm: str) -> dict[str, bool | None]:
         positive = any(kw in query_norm for kw in keywords["positive"])
         negative = any(kw in query_norm for kw in keywords["negative"])
 
-        if positive and not negative:
-            result[flag_name] = True
-        elif negative and not positive:
+        if negative:
             result[flag_name] = False
+        elif positive:
+            result[flag_name] = True
         else:
             result[flag_name] = None
 
@@ -359,11 +427,14 @@ def extract_filters(query: str) -> FilterQuery:
     bedrooms, bathrooms = _extract_rooms(query_norm)
     area_min = _extract_area(query_norm)
     zone = _extract_zone(query_norm)
-    property_types = _extract_property_types(query_norm)
+    property_types, dwelling_types = split_property_terms(
+        _extract_property_types(query_norm)
+    )
     flags = _extract_boolean_flags(query_norm)
 
     return FilterQuery(
         property_type=property_types,
+        dwelling_type=dwelling_types,
         zone=zone,
         min_price_usd=min_price,
         max_price_usd=max_price,

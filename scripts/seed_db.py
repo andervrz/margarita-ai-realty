@@ -1,13 +1,16 @@
-# seeds/seed_database.py
+# scripts/seed_db.py
 """Script de seed — carga 35 propiedades reales de Margarita en la DB de prueba.
 
 Uso:
-    uv run python seeds/seed_database.py
+    uv run python scripts/seed_db.py
+
+Funciona contra SQLite (dev) o PostgreSQL/Neon (la config de conexión la
+aplica app.db.engine). En PostgreSQL crea la extensión pgvector.
 
 Crea:
     - Tenant de demo (Esparta Inmuebles)
     - 35 propiedades basadas en listados reales 2025-2026
-    - Embeddings sqlite-vec para todas las propiedades
+    - Embeddings (fastembed → columna pgvector) para todas las propiedades
     - Ingestion log del proceso
 
 Idempotente: si el tenant/propiedades ya existen, los actualiza.
@@ -36,8 +39,7 @@ async def main() -> None:
     from app.db.engine import AsyncSessionLocal, engine
     from app.db.models.tenant import Tenant
     from app.ingestion.pipeline import IngestionPipeline
-    from sqlalchemy import select, event
-    import sqlite_vec
+    from sqlalchemy import select, text
 
     setup_logging()
     settings = get_settings()
@@ -45,18 +47,12 @@ async def main() -> None:
     print("🏝️  Margarita AI Realty — Seed Database")
     print("=" * 50)
 
-    # ── Crear tablas si no existen ────────────────────────────────
-    @event.listens_for(engine.sync_engine, "connect")
-    def configure_sqlite(dbapi_conn, _):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-        dbapi_conn.enable_load_extension(True)
-        sqlite_vec.load(dbapi_conn)
-        dbapi_conn.enable_load_extension(False)
-
+    # ── Crear tablas ──────────────────────────────────────────────
+    # La config de conexión (WAL en SQLite) la aplica app.db.engine.
+    # En PostgreSQL hay que crear la extensión pgvector antes del schema.
     async with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
     print("✅ Tablas verificadas")
 

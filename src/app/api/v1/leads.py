@@ -25,10 +25,10 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.app.api.middleware import get_current_tenant
-from src.app.core.logging import get_logger
-from src.app.db.engine import AsyncSessionLocal
-from src.app.db.models.lead import Lead
+from app.api.middleware import get_current_tenant
+from app.core.logging import get_logger
+from app.db.engine import AsyncSessionLocal
+from app.db.models.lead import Lead
 
 logger = get_logger(__name__)
 
@@ -251,7 +251,7 @@ async def resend_notifications(
     """
     from sqlalchemy import select
 
-    from src.app.notifications.dispatcher import dispatch_booking_notifications
+    from app.notification.dispatcher import dispatch_booking_notifications
 
     tenant_id = tenant["id"]
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -274,7 +274,7 @@ async def resend_notifications(
         # Cargar propiedad asociada si existe
         prop = None
         if lead.property_id:
-            from src.app.db.models.property import Property
+            from app.db.models.property import Property
             prop_result = await session.execute(
                 select(Property).where(Property.id == lead.property_id)
             )

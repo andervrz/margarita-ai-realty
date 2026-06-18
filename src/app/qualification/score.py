@@ -18,14 +18,14 @@ from __future__ import annotations
 from typing import Any
 from dataclasses import dataclass
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.qualification.extractor import (
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.qualification.extractor import (
     ExtractedSignals,
     extract_signals_from_history,
     get_missing_signals,
 )
-from src.app.qualification.signals import get_stage_from_score
+from app.qualification.signals import get_stage_from_score
 
 logger = get_logger(__name__)
 
@@ -103,7 +103,7 @@ def calculate_qualification_score(
     return QualificationResult(
         total_score=total_score,
         stage=stage,
-        signals_found=tuple(extracted.signals_found),,
+        signals_found=tuple(extracted.signals_found),
         missing_signals=tuple(missing),
         is_international=is_international,
         suggested_questions=tuple(questions),
@@ -115,7 +115,7 @@ def calculate_qualification_score(
 
 def _calculate_base_score(extracted: ExtractedSignals) -> int:
     """Calcula score base sumando puntos de señales detectadas."""
-    from src.app.qualification.signals import get_signal_points
+    from app.qualification.signals import get_signal_points
     
     score = 0
     
@@ -155,13 +155,13 @@ def _calculate_modifiers(
     """
     modifiers = 0
     query_lower = current_query.lower()
-    
-    # Bonificación: múltiples zonas mencionadas
-    from src.app.qualification.signals import MARGARITA_ZONES
-    zones_mentioned = sum(1 for z in MARGARITA_ZONES if z in query_lower)
-    if zones_mentioned >= 2:
+
+    # Bonificación: múltiples zonas mencionadas (comparando opciones).
+    # Se evalúa sobre TODA la conversación (extracted), no solo el query actual,
+    # que suele estar vacío o ser un único mensaje.
+    if extracted.zones_mentioned >= 2:
         modifiers += 5
-        logger.debug("modifier_multiple_zones", zones=zones_mentioned)
+        logger.debug("modifier_multiple_zones", zones=extracted.zones_mentioned)
     
     # Bonificación: intención de visita explícita
     visit_keywords_es = ["visita", "agendar", "cita", "ver la propiedad", "cuándo puedo ver"]
@@ -201,7 +201,7 @@ def _generate_questions(
     language: str,
 ) -> list[str]:
     """Genera preguntas de calificación para señales faltantes."""
-    from src.app.qualification.signals import get_qualification_question
+    from app.qualification.signals import get_qualification_question
     
     questions: list[str] = []
     

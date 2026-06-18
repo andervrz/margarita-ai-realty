@@ -4,43 +4,39 @@ name        = "margarita-ai-realty"
 version     = "1.2.0"
 description = "AI chatbot para inmobiliarias en Isla de Margarita, Venezuela"
 readme      = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 
 dependencies = [
     # ── FastAPI Stack ─────────────────────────────────────────────
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.12",          # UploadFile en endpoints de ingestion
-
     # ── Pydantic v2 ───────────────────────────────────────────────
     "pydantic[email]>=2.10.0",           # EmailStr en schemas/lead.py
     "pydantic-settings>=2.6.0",          # Settings desde .env
-
     # ── Base de Datos ─────────────────────────────────────────────
     "sqlalchemy[asyncio]>=2.0.36",
     "aiosqlite>=0.20.0",                 # Driver async SQLite
     "alembic>=1.14.0",                   # Migraciones versionadas
+    "pgvector>=0.3.0",                 # Vector type para SQLAlchemy + PostgreSQL
+    "asyncpg>=0.29.0",                 # Driver async PostgreSQL para SQLAlchemy
     "sqlite-vec>=0.1.6",                 # Vector search nativo en SQLite
-
     # ── LLM ───────────────────────────────────────────────────────
     "litellm>=1.55.0",                   # Gateway Groq + Gemini unificado
-    "sentence-transformers>=3.3.0",      # Embeddings locales (paraphrase-multilingual-MiniLM-L12-v2)
-
+    "fastembed>=0.8.0",                  # Embeddings locales ONNX (sin PyTorch)
     # ── Notificaciones ────────────────────────────────────────────
     "aiosmtplib>=3.0.0",                 # SMTP async sin bloquear event loop
     "httpx>=0.27.0",                     # HTTP async para WhatsApp Meta API
-
     # ── Google Calendar ───────────────────────────────────────────
     "google-api-python-client>=2.155.0",
     "google-auth>=2.37.0",
     "google-auth-httplib2>=0.2.0",
-
     # ── Logging ───────────────────────────────────────────────────
     "structlog>=24.4.0",
-
     # ── CSV / Excel ───────────────────────────────────────────────
     "pandas>=2.2.0",
     "openpyxl>=3.1.5",                   # Soporte .xlsx en pandas
+    "logfire[asyncpg,fastapi,httpx,sqlalchemy]>=4.37.0",
 ]
 
 [dependency-groups]
@@ -67,7 +63,7 @@ packages = ["src/app"]
 # sin necesidad de instalar el paquete. Complementa el build-system arriba.
 pythonpath   = ["src"]
 asyncio_mode = "auto"           # pytest-asyncio — async/await en tests sin decorador
-testpaths    = ["tests"]
+testpaths    = ["test"]
 python_files = ["test_*.py"]
 python_classes  = ["Test*"]
 python_functions = ["test_*"]
@@ -89,6 +85,11 @@ ignore  = [
     "E501",   # line too long — manejado por el formatter
     "UP007",  # X | Y syntax — usamos typing.Union en alembic por compat
 ]
+
+[[tool.uv.index]]
+explicit = true
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 
 # ── Comandos de uso frecuente (documentación inline) ─────────────
 #

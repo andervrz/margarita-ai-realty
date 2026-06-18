@@ -7,12 +7,6 @@ Todos los estados, tipos y etapas del sistema centralizados aquí.
 from enum import Enum
 
 
-class Plan(str, Enum):
-    BASIC = "basic"       
-    STANDARD = "standard"
-    PRO = "pro"
-
-
 class Language(str, Enum):
     """Idiomas soportados por el chatbot."""
     ES = "es"
@@ -45,29 +39,16 @@ class LeadStatus(str, Enum):
     CANCELADO = "cancelado"
 
 
-class QualificationStage(str, Enum):
-    """Etapa del lead qualification engine."""
-    EXPLORE = "explore"
-    QUALIFY = "qualify"
-    BOOK = "book"
-
-
-class BookingStep(str, Enum):
-    """Pasos secuenciales del flujo de agendamiento."""
-    NAME = "name"
-    EMAIL = "email"
-    PHONE = "phone"
-    DATE = "date"
-    TIME = "time"
-    DURATION = "duration"
-    NOTES = "notes"
-    CONFIRM = "confirm"
-
-
-class NotificationChannel(str, Enum):
-    """Canales de notificación al agente."""
-    WHATSAPP = "whatsapp"
-    EMAIL = "email"
+class SearchSource(str, Enum):
+    """Fuente del resultado de búsqueda."""
+    SQL = "sql"
+    VEC = "vec"
+    HYBRID = "hybrid"
+    FALLBACK = "fallback"
+    VEC_UNAVAILABLE = "vec_unavailable"
+    VEC_ERROR = "vec_error"
+    NO_RESULTS = "no_results"
+    LLM_BLOCKED = "llm_blocked"
 
 
 class IngestionStatus(str, Enum):

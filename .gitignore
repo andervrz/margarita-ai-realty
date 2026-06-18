@@ -51,6 +51,18 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Bases de datos SQLite locales (dev, tests, seed)
+*.db
+*.db-shm
+*.db-wal
+
+# Notas / scratch locales (no versionar)
+pogress.md
+cli_test.txt
+
+# Credenciales de Logfire (auth/proyecto — contienen token)
+.logfire/
+
 # Translations
 *.mo
 *.pot

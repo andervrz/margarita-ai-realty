@@ -18,10 +18,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.llm.client import chat_completion
-from src.app.schemas.search import FilterQuery
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.exceptions import LLMError
+from app.llm.client import chat_completion
+from app.schemas.search import FilterQuery
 
 logger = get_logger(__name__)
 
@@ -144,8 +145,14 @@ class _FilterLLMOutput(BaseModel):
         return None
 
     def to_filter_query(self, raw_query: str) -> FilterQuery:
+        # El LLM mete operaciones y viviendas mezcladas en property_type;
+        # las separamos con la misma fuente de verdad que el extractor regex.
+        from app.search.filter_extractor import split_property_terms
+
+        operations, dwellings = split_property_terms(self.property_type)
         return FilterQuery(
-            property_type=self.property_type,
+            property_type=operations,
+            dwelling_type=dwellings,
             zone=self.zone,
             min_price_usd=self.min_price_usd,
             max_price_usd=self.max_price_usd,
@@ -178,8 +185,8 @@ class _FilterLLMOutput(BaseModel):
 
 # ── Excepción de Dominio ──────────────────────────────────────────
 
-class LLMFilterExtractionError(Exception):
-    """Error en extracción de filtros vía LLM."""
+class LLMFilterExtractionError(LLMError):
+    """Error en extracción de filtros vía LLM (DomainError → HTTP 500)."""
     def __init__(
         self,
         message: str,
@@ -289,8 +296,15 @@ def _build_fallback_filter_query(
         cleaned = str(val).lower().strip()
         return cleaned if cleaned else None
 
+    # Separar operaciones (venta/arriendo/...) de viviendas (apartamento/casa/...)
+    # con la misma fuente de verdad que el extractor regex y to_filter_query.
+    from app.search.filter_extractor import split_property_terms
+
+    operations, dwellings = split_property_terms(_sl(data.get("property_type")))
+
     return FilterQuery(
-        property_type=_sl(data.get("property_type")),
+        property_type=operations,
+        dwelling_type=dwellings,
         zone=_ss(data.get("zone")),
         min_price_usd=_sf(data.get("min_price_usd")),
         max_price_usd=_sf(data.get("max_price_usd")),
@@ -313,7 +327,7 @@ def _select_model() -> str:
     if settings.groq_api_key:
         return "groq/llama-3.3-70b-versatile"
     if settings.gemini_api_key:
-        return "gemini/gemini-2.5-pro"
+        return "gemini/gemini-2.5-flash"
     return "groq/llama-3.3-70b-versatile"
 
 
@@ -478,19 +492,6 @@ async def _try_manual_parsing(
     return llm_output.to_filter_query(raw_query)
 
 
-def get_cache_stats() -> dict[str, Any]:
-    """Retorna estadísticas del cache para monitoreo."""
-    return {
-        "cache_size": len(_filter_cache),
-        "cache_max_size": _CACHE_MAX_SIZE,
-    }
-
-
-def clear_cache() -> None:
-    """Limpia el cache (útil para testing)."""
-    _filter_cache.clear()
-
-
 # ── Smoke Tests ───────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -538,7 +539,7 @@ if __name__ == "__main__":
 
         # Test 4: Cache funcional
         print("\n🧪 Test 4: Cache")
-        clear_cache()
+        _filter_cache.clear()
         key1 = _get_cache_key("busco casa", "es")
         key2 = _get_cache_key("busco casa", "es")
         key3 = _get_cache_key("busco casa", "en")
@@ -560,7 +561,9 @@ if __name__ == "__main__":
         assert fq_dirty.max_price_usd == 200000.0
         assert fq_dirty.bedrooms_min == 2
         assert fq_dirty.vista_al_mar is True
-        assert fq_dirty.property_type == ["apartamento"]
+        # "apartamento" es vivienda → va a dwelling_type, no a property_type
+        assert fq_dirty.dwelling_type == ["apartamento"]
+        assert fq_dirty.property_type is None
         print("   ✅ Fallback defensivo normaliza datos sucios")
 
         print("\n🎉 Todos los smoke tests pasaron ✅")

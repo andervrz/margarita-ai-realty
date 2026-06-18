@@ -2,14 +2,15 @@
 """Schemas Pydantic para búsqueda híbrida."""
 
 from pydantic import BaseModel, Field
-from src.app.schemas.property import PropertyChatSummary
-from src.app.core.constants import SearchSource
+from app.schemas.property import PropertyChatSummary
+from app.core.constants import SearchSource
 
 
 class FilterQuery(BaseModel):
     """Filtros estructurales extraídos del texto del usuario."""
     
-    property_type: list[str] | None = None
+    property_type: list[str] | None = None  # operación: venta/arriendo/...
+    dwelling_type: list[str] | None = None   # vivienda: apartamento/casa/...
     zone: str | None = None
     min_price_usd: float | None = None
     max_price_usd: float | None = None
@@ -34,7 +35,27 @@ class FilterQuery(BaseModel):
         """True si no hay filtros estructurales extraídos."""
         return all(
             v is None for v in [
-                self.property_type, self.zone,
+                self.property_type, self.dwelling_type, self.zone,
+                self.min_price_usd, self.max_price_usd,
+                self.min_price_bs, self.max_price_bs,
+                self.bedrooms_min, self.bathrooms_min,
+                self.area_min_m2, self.area_max_m2,
+                self.vista_al_mar, self.frente_playa,
+                self.uso_vacacional, self.tipo_especial,
+            ]
+        )
+
+    @property
+    def has_specific_criteria(self) -> bool:
+        """True si hay al menos un filtro ESPECÍFICO (más allá de la operación).
+
+        La operación sola (venta/arriendo) NO basta para listar propiedades:
+        evita devolver un "top-N por defecto" arbitrario. Se requiere zona,
+        precio, habitaciones, baños, área, tipo de vivienda o un flag.
+        """
+        return any(
+            v is not None for v in [
+                self.dwelling_type, self.zone,
                 self.min_price_usd, self.max_price_usd,
                 self.min_price_bs, self.max_price_bs,
                 self.bedrooms_min, self.bathrooms_min,
@@ -47,11 +68,16 @@ class FilterQuery(BaseModel):
 
 class SearchResult(BaseModel):
     """Resultado de búsqueda híbrida."""
-    
+
     properties: list[PropertyChatSummary]
     source: SearchSource
     total_found: int
     query_text: str | None = None
+
+    @property
+    def is_empty(self) -> bool:
+        """True si la búsqueda no retornó propiedades."""
+        return not self.properties
 
 
 # ── Smoke Test ─────────────────────────────────────────────────────

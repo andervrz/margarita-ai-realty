@@ -30,12 +30,19 @@ def setup_logging(app_env: str = "development", log_level: str = "INFO") -> None
     shared_processors = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
-        structlog.processors.PositionalArgumentsFormatter(),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.TimeStamper(fmt="iso"),
     ]
     
+    # Puente structlog → Logfire: reenvía cada evento a Logfire (si está
+    # instalado) sin reemplazar el renderer de consola. No-op si no hay token.
+    bridge_processors = []
+    try:
+        from logfire.integrations.structlog import LogfireProcessor
+        bridge_processors.append(LogfireProcessor())
+    except ImportError:
+        pass
+
     # Processors específicos por entorno
     if app_env == "development":
         # Consola legible con colores
@@ -43,9 +50,9 @@ def setup_logging(app_env: str = "development", log_level: str = "INFO") -> None
     else:
         # JSON para producción (logs estructurados)
         final_processor = structlog.processors.JSONRenderer()
-    
+
     structlog.configure(
-        processors=shared_processors + [final_processor],
+        processors=shared_processors + bridge_processors + [final_processor],
         wrapper_class=structlog.make_filtering_bound_logger(level),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),

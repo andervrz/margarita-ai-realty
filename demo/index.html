@@ -324,16 +324,18 @@
 
 <script>
 // ── Configuración ─────────────────────────────────────────────────
-// Ajusta WS_HOST y API_HOST si el servidor corre en otro puerto u host
+// El host se deriva de window.location, así funciona sirviendo el demo
+// desde la misma app (incl. Web Preview de Cloud Shell, que usa HTTPS).
+// Para apuntar a otro server, sobreescribe WS_HOST/API_HOST manualmente.
+const _wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const CONFIG = {
-    WS_HOST:              'ws://localhost:8000',
-    API_HOST:             'http://localhost:8000',
-    // Rutas según router setup:
-    //   chat.router sin prefix, montado en api_v1_router → /api/v1
+    WS_HOST:              _wsProto + '//' + window.location.host,
+    API_HOST:             window.location.origin,
+    // Rutas (chat.router → /api/v1):
     //   WebSocket: /api/v1/ws/chat/{session_id}
-    //   POST:      /api/v1
+    //   POST:      /api/v1/chat
     WS_PATH:              '/api/v1/ws/chat/',
-    API_PATH:             '/api/v1',
+    API_PATH:             '/api/v1/chat',
     RECONNECT_DELAY_MS:   3000,
     MAX_RECONNECT:        5,
     STORAGE_KEY:          'margarita_realty_session_id',
@@ -457,15 +459,7 @@ function handleServerMessage(data) {
 
     // Texto principal del bot
     if (data.content) {
-        const div = addMessage(data.content, 'bot');
-
-        // Badge de booking si está activo
-        if (data.is_booking_active && data.booking_step) {
-            const badge = document.createElement('div');
-            badge.className = 'booking-badge';
-            badge.textContent = `📋 Paso: ${data.booking_step}`;
-            div.prepend(badge);
-        }
+        addMessage(data.content, 'bot');
     }
 
     // Cards de propiedades

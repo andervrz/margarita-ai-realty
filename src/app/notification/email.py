@@ -22,24 +22,25 @@ from email.mime.text import MIMEText
 import aiosmtplib
 import uuid
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.db.models.lead import Lead
-from src.app.db.models.property import Property
-from src.app.db.models.tenant import Tenant
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.db.models.lead import Lead
+from app.db.models.property import Property
+from app.db.models.tenant import Tenant
+from app.exceptions import EmailError
 
 logger = get_logger(__name__)
 
 # ── Excepciones ───────────────────────────────────────────────────
 
-class EmailSMTPError(Exception):
-    """Error en comunicación SMTP."""
+class EmailSMTPError(EmailError):
+    """Error en comunicación SMTP (DomainError → HTTP 502)."""
     pass
 
 
 # ── Configuración ─────────────────────────────────────────────────
 
-
+settings = get_settings()
 
 
 # ── Función principal ─────────────────────────────────────────────

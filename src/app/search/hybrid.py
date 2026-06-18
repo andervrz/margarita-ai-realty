@@ -5,11 +5,11 @@ Flujo:
   1. Capa 1:  Regex extractor (costo CERO)
   2. Capa 1b: LLM fallback (solo si regex vacío + circuit breaker permite)
   3. Capa 2:  SQL search (verdad estructural, prioridad máxima)
-  4. Capa 3:  sqlite-vec (solo si SQL vacío)
+  4. Capa 3:  pgvector (solo si SQL vacío)
   5. Capa 4:  Sin resultados → respuesta honesta con sugerencias
 
 Reglas de Oro:
-  - SQL con resultados → NO invocar sqlite-vec
+  - SQL con resultados → NO invocar pgvector
   - LLM nunca inventa propiedades — solo extrae filtros
   - Circuit breaker previene cascada de costos por queries ambiguos
 """
@@ -21,13 +21,12 @@ from collections import defaultdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.schemas.search import FilterQuery, SearchResult
-from src.app.search.filter_extractor import extract_filters as extract_filters_regex
-from src.app.search.filter_llm import LLMFilterExtractionError, extract_filters_with_llm
-from src.app.search.sql_search import search_properties_sql
-from src.app.search.vec_search import search_properties_vec
+from app.core.logging import get_logger
+from app.schemas.search import FilterQuery, SearchResult
+from app.search.filter_extractor import extract_filters as extract_filters_regex
+from app.search.filter_llm import LLMFilterExtractionError, extract_filters_with_llm
+from app.search.sql_search import search_properties_sql
+from app.search.vec_search import search_properties_vec
 
 logger = get_logger(__name__)
 
@@ -74,55 +73,24 @@ def _cleanup_old_sessions(current_time: float) -> None:
         _llm_fallback_last_reset.pop(sid, None)
 
 
-def _enrich_result(
-    result: SearchResult,
-    extraction_method: str,
-    total_duration_ms: float,
-) -> SearchResult:
-    """Agrega metadata de orquestación al resultado."""
-    return SearchResult(
-        properties=result.properties,
-        source=result.source,
-        total_found=result.total_found,
-        query_text=result.query_text,
-    )
+# Frases con las que el usuario pide ver/explorar el catálogo sin dar filtros.
+# Solo en estos casos una query "sin filtros" debe devolver el top-N por defecto.
+_BROWSE_INTENT = (
+    # ES
+    "ver propiedad", "ver propiedades", "muestrame", "muéstrame", "muestra",
+    "mostrar", "que tienes", "qué tienes", "que hay", "qué hay", "todas",
+    "todo", "opciones", "mas opciones", "más opciones", "otras opciones",
+    "disponible", "disponibles", "catalogo", "catálogo", "lista", "listado",
+    # EN
+    "show", "see propert", "what do you have", "all propert", "options",
+    "more options", "available", "list", "browse", "anything",
+)
 
 
-def _generate_fallback_suggestions(
-    filters: FilterQuery,
-    language: str,
-) -> list[str]:
-    """Genera sugerencias contextualizadas cuando no hay resultados."""
-    suggestions = []
-
-    if filters.zone:
-        suggestions.append(
-            f"Propiedades en {filters.zone.title()}"
-            if language == "es"
-            else f"Properties in {filters.zone.title()}"
-        )
-    if filters.max_price_usd:
-        suggestions.append(
-            f"Opciones hasta ${filters.max_price_usd:,.0f}"
-            if language == "es"
-            else f"Options under ${filters.max_price_usd:,.0f}"
-        )
-    if filters.property_type:
-        type_label = filters.property_type[0]
-        suggestions.append(
-            f"{type_label.title()}s disponibles"
-            if language == "es"
-            else f"Available {type_label}s"
-        )
-
-    if not suggestions:
-        suggestions = (
-            ["Apartamentos en Pampatar", "Casas con vista al mar", "Propiedades hasta $200,000"]
-            if language == "es"
-            else ["Apartments in Pampatar", "Houses with ocean view", "Properties under $200,000"]
-        )
-
-    return suggestions[:3]
+def _has_browse_intent(text: str) -> bool:
+    """True si el usuario pide explorar el catálogo (sin filtros concretos)."""
+    low = text.lower()
+    return any(kw in low for kw in _BROWSE_INTENT)
 
 
 # ── Función Principal ─────────────────────────────────────────────
@@ -134,6 +102,7 @@ async def hybrid_search(
     session_id: str,
     language: str = "es",
     max_results: int = 3,
+    sticky_operation: list[str] | None = None,
 ) -> SearchResult:
     """
     Orquesta búsqueda híbrida de 4 capas.
@@ -163,51 +132,44 @@ async def hybrid_search(
     # ── Capa 1: Regex (costo CERO) ────────────────────────────────
     filters = extract_filters_regex(user_query)
 
-    # ── Capa 1b: LLM fallback ─────────────────────────────────────
-    if filters.is_empty:
-        if _should_allow_llm_fallback(session_id):
-            # Incrementar contador ANTES de llamar al LLM
-            _llm_fallback_counts[session_id] += 1
-
-            logger.info(
-                "llm_fallback_triggered",
-                session_id=session_id,
-                attempt=_llm_fallback_counts[session_id],
-            )
-
-            try:
-                filters = await extract_filters_with_llm(user_query, language=language)
-                extraction_method = "llm_fallback"
-            except LLMFilterExtractionError as e:
-                logger.warning(
-                    "llm_fallback_error",
-                    session_id=session_id,
-                    error=str(e)[:100],
-                )
-                filters = FilterQuery(raw_query=user_query, extracted_by="llm_fallback")
-                extraction_method = "llm_error"
-        else:
-            logger.warning(
-                "llm_fallback_blocked",
-                session_id=session_id,
-                total_attempts=_llm_fallback_counts[session_id],
-            )
-            return SearchResult(
-                properties=[],
-                source="llm_blocked",
-                total_found=0,
-                query_text=user_query,
-            )
+    # Heredar la operación recordada (venta/arriendo) de turnos anteriores. NO
+    # cuenta como criterio específico: por sí sola no dispara el listado.
+    if not filters.property_type and sticky_operation:
+        filters.property_type = sticky_operation
+        logger.info(
+            "sticky_operation_applied",
+            session_id=session_id,
+            operation=sticky_operation,
+        )
 
     logger.info(
         "filters_extracted",
         method=extraction_method,
-        is_empty=filters.is_empty,
+        has_specific=filters.has_specific_criteria,
         filters={
             k: v for k, v in filters.model_dump().items()
             if v is not None and k not in ("raw_query", "extracted_by")
         },
     )
+
+    # ── Gate: solo se lista con un criterio ESPECÍFICO ────────────
+    # La operación sola (venta/arriendo) NO basta para listar — evitaba el
+    # "top-3 más baratas" arbitrario en cada turno. Y NO usamos un LLM para
+    # inventar filtros desde texto vago: si el regex no extrajo nada específico
+    # (zona/precio/habitaciones/tipo de vivienda/flags), devolvemos vacío y el
+    # chat-LLM guía al usuario a concretar. El foco previo lo conserva el engine.
+    if not filters.has_specific_criteria:
+        logger.info(
+            "no_specific_filters_skip_search",
+            session_id=session_id,
+            query=user_query[:80],
+        )
+        return SearchResult(
+            properties=[],
+            source="no_results",
+            total_found=0,
+            query_text=user_query,
+        )
 
     # ── Capa 2: SQL (verdad estructural) ──────────────────────────
     sql_start = time.perf_counter()
@@ -232,7 +194,7 @@ async def hybrid_search(
         )
         return sql_result
 
-    # ── Capa 3: sqlite-vec (fallback semántico) ───────────────────
+    # ── Capa 3: pgvector (fallback semántico) ───────────────────
     logger.info(
         "sql_empty_triggering_vec",
         tenant_id=tenant_id,
@@ -278,36 +240,18 @@ async def hybrid_search(
     )
 
 
-# ── Utilidades ────────────────────────────────────────────────────
-
-def get_circuit_breaker_stats() -> dict:
-    """Retorna estado del circuit breaker para monitoreo."""
-    return {
-        "tracked_sessions": len(_llm_fallback_counts),
-        "limit_per_session": LLM_FALLBACK_LIMIT_PER_SESSION,
-        "window_seconds": LLM_FALLBACK_WINDOW_SECONDS,
-        "sessions": dict(_llm_fallback_counts),
-    }
-
-
-def reset_circuit_breaker() -> None:
-    """Resetea el circuit breaker (útil para testing)."""
-    _llm_fallback_counts.clear()
-    _llm_fallback_last_reset.clear()
-
-
 # ── Smoke Tests ───────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import asyncio
-    from unittest.mock import AsyncMock, patch
 
     async def run_tests():
         print("🔥 Smoke Tests — hybrid.py\n")
 
         # Test 1: Circuit breaker
         print("🧪 Test 1: Circuit breaker")
-        reset_circuit_breaker()
+        _llm_fallback_counts.clear()
+        _llm_fallback_last_reset.clear()
         sid = "test-session"
 
         for i in range(3):
@@ -322,28 +266,6 @@ if __name__ == "__main__":
         _llm_fallback_last_reset[sid] = time.time() - LLM_FALLBACK_WINDOW_SECONDS - 1
         assert _should_allow_llm_fallback(sid) is True  # ventana expiró → reset
         print("   ✅ Ventana de tiempo se resetea correctamente")
-
-        # Test 3: Sugerencias por idioma
-        print("\n🧪 Test 3: Sugerencias contextualizadas")
-        from src.app.schemas.search import FilterQuery
-
-        f_es = FilterQuery(zone="pampatar", max_price_usd=200000, raw_query="test")
-        sugs_es = _generate_fallback_suggestions(f_es, "es")
-        assert any("Pampatar" in s for s in sugs_es)
-        assert any("$200,000" in s for s in sugs_es)
-        print("   ✅ Sugerencias ES correctas")
-
-        f_en = FilterQuery(zone="pampatar", raw_query="test")
-        sugs_en = _generate_fallback_suggestions(f_en, "en")
-        assert any("Pampatar" in s for s in sugs_en)
-        print("   ✅ Sugerencias EN correctas")
-
-        # Test 4: Stats del circuit breaker
-        print("\n🧪 Test 4: Stats del circuit breaker")
-        stats = get_circuit_breaker_stats()
-        assert "tracked_sessions" in stats
-        assert "limit_per_session" in stats
-        print(f"   ✅ Stats: {stats['tracked_sessions']} sesiones tracked")
 
         print("\n🎉 Todos los smoke tests pasaron ✅")
 

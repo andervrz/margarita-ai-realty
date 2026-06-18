@@ -6,11 +6,12 @@ import io
 import json
 from typing import Any
 
-from src.app.schemas.ingestion import PropertyCSVRow
+from app.exceptions import ParseError
+from app.schemas.ingestion import PropertyCSVRow
 
 
-class CSVParseError(Exception):
-    """Error fatal en parsing de CSV."""
+class CSVParseError(ParseError):
+    """Error fatal en parsing de CSV (DomainError → HTTP 400)."""
     pass
 
 

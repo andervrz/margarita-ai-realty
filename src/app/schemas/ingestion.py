@@ -1,7 +1,7 @@
 # src/app/schemas/ingestion.py
 """Schemas Pydantic para ingestion de CSV."""
 from pydantic import BaseModel, Field, field_validator
-from src.app.core.constants import IngestionStatus
+from app.core.constants import IngestionStatus
 
 
 class PropertyCSVRow(BaseModel):
@@ -43,7 +43,8 @@ class PropertyCSVRow(BaseModel):
 
 class IngestionResult(BaseModel):
     """Resultado del pipeline de ingestion."""
-    
+
+    ingestion_id: str | None = None  # id del IngestionLog persistido
     filename: str
     total_rows: int
     valid_rows: int

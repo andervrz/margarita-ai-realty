@@ -5,10 +5,8 @@ Todas las API keys, secrets y credenciales se leen del archivo .env.
 Nunca hardcodeadas. Validación en producción para variables críticas.
 """
 
-import os
-import re
 from functools import lru_cache
-from pydantic import Field, field_validator, ValidationError
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,11 +28,18 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="")
     log_level: str = Field(default="INFO")
 
-    # ── Database (stack unificado SQLite + sqlite-vec) ────
+    # ── Observabilidad (Pydantic Logfire) ─────────────────
+    # Sin token: no envía a la nube (no rompe dev/tests). Con token: trazas
+    # completas en logfire. logfire_console muestra los spans en consola local.
+    logfire_token: str = Field(default="")
+    logfire_console: bool = Field(default=False)
+    logfire_service_name: str = Field(default="margarita-ai-realty")
+
+    # ── Database (SQLite (dev) o PostgreSQL + pgvector) ────
     database_url: str = Field(default="sqlite+aiosqlite:///./chatbot.db")
 
-    # ── Embeddings (sentence-transformers) ────────────────
-    embedding_model: str = Field(default="paraphrase-multilingual-MiniLM-L12-v2")
+    # ── Embeddings (fastembed — ONNX, sin PyTorch) ────────
+    embedding_model: str = Field(default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
     embedding_dims: int = Field(default=384)
 
     # ── LLM API Keys (desde .env únicamente) ──────────────

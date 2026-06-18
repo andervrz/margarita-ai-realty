@@ -3,7 +3,7 @@
 
 Reglas de Oro:
   1. Siempre filtra por tenant_id + status='disponible'
-  2. Si retorna resultados → sqlite-vec NO se invoca
+  2. Si retorna resultados → pgvector NO se invoca
   3. Boolean flags manejan True/False/None explícitamente
   4. Costo CERO de LLM — SQL puro con índices
 """
@@ -17,11 +17,11 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import BinaryExpression
 
-from src.app.core.config import get_settings
-from src.app.core.logging import get_logger
-from src.app.db.models.property import Property
-from src.app.schemas.property import PropertyChatSummary
-from src.app.schemas.search import FilterQuery, SearchResult
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.db.models.property import Property
+from app.schemas.property import PropertyChatSummary
+from app.schemas.search import FilterQuery, SearchResult
 
 logger = get_logger(__name__)
 
@@ -111,7 +111,7 @@ async def search_properties_sql(
         )
     )
 
-    # 1. Property type con OR logic (property_type OR tipo_especial)
+    # 1. Operación (venta/arriendo/...) — columna property_type o tipo_especial
     if filters.property_type:
         stmt = stmt.where(
             or_(
@@ -119,6 +119,15 @@ async def search_properties_sql(
                 Property.tipo_especial.in_(filters.property_type),
             )
         )
+
+    # 1b. Tipo de vivienda (apartamento/casa/...) — no es columna estructurada,
+    # se matchea por texto contra título y tipo_especial.
+    if filters.dwelling_type:
+        dwelling_exprs = []
+        for dwelling in filters.dwelling_type:
+            dwelling_exprs.append(Property.title.ilike(f"%{dwelling}%"))
+            dwelling_exprs.append(Property.tipo_especial.ilike(f"%{dwelling}%"))
+        stmt = stmt.where(or_(*dwelling_exprs))
 
     # 2. Zona con búsqueda parcial case-insensitive
     if filters.zone:
@@ -154,8 +163,17 @@ async def search_properties_sql(
     if filters.tipo_especial and filters.property_type != [filters.tipo_especial]:
         stmt = stmt.where(Property.tipo_especial.ilike(f"%{filters.tipo_especial}%"))
 
-    # Ordenamiento y límite
-    stmt = stmt.order_by(Property.price_usd.asc().nullslast())
+    # Ordenamiento acorde al presupuesto (en vez de "siempre las más baratas"):
+    #   - tope dado  → de mayor a menor (las que mejor aprovechan el presupuesto,
+    #                  cercanas al tope, ya filtradas a <= max por el WHERE)
+    #   - piso dado  → de menor a mayor desde el mínimo
+    #   - sin presupuesto → orden neutral por más recientes (no sesga a lo barato)
+    if filters.max_price_usd is not None:
+        stmt = stmt.order_by(Property.price_usd.desc().nullslast())
+    elif filters.min_price_usd is not None:
+        stmt = stmt.order_by(Property.price_usd.asc().nullslast())
+    else:
+        stmt = stmt.order_by(Property.created_at.desc())
     stmt = stmt.limit(effective_limit)
 
     # Ejecución
@@ -196,8 +214,8 @@ async def search_properties_sql(
 if __name__ == "__main__":
     import asyncio
 
-    from src.app.db.base import Base
-    from src.app.db.engine import AsyncSessionLocal, engine
+    from app.db.base import Base
+    from app.db.engine import AsyncSessionLocal, engine
 
     async def run_tests():
         print("🔥 Smoke Tests — sql_search.py\n")
