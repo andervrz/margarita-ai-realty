@@ -45,6 +45,26 @@ class FilterQuery(BaseModel):
             ]
         )
 
+    @property
+    def has_specific_criteria(self) -> bool:
+        """True si hay al menos un filtro ESPECÍFICO (más allá de la operación).
+
+        La operación sola (venta/arriendo) NO basta para listar propiedades:
+        evita devolver un "top-N por defecto" arbitrario. Se requiere zona,
+        precio, habitaciones, baños, área, tipo de vivienda o un flag.
+        """
+        return any(
+            v is not None for v in [
+                self.dwelling_type, self.zone,
+                self.min_price_usd, self.max_price_usd,
+                self.min_price_bs, self.max_price_bs,
+                self.bedrooms_min, self.bathrooms_min,
+                self.area_min_m2, self.area_max_m2,
+                self.vista_al_mar, self.frente_playa,
+                self.uso_vacacional, self.tipo_especial,
+            ]
+        )
+
 
 class SearchResult(BaseModel):
     """Resultado de búsqueda híbrida."""

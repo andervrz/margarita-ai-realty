@@ -56,8 +56,9 @@ cover/
 *.db-shm
 *.db-wal
 
-# Notas de progreso locales (no versionar)
+# Notas / scratch locales (no versionar)
 pogress.md
+cli_test.txt
 
 # Credenciales de Logfire (auth/proyecto — contienen token)
 .logfire/

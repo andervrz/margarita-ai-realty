@@ -55,6 +55,15 @@ class SessionMemory:
     # follow-ups sin términos de búsqueda ("me gusta la de $400", "agendar
     # visita") sigan teniendo contexto del catálogo. RAM-only en V1.
     last_properties: list[dict[str, Any]] = field(default_factory=list)
+    # Operación recordada (venta/arriendo) entre turnos: si el usuario dijo
+    # "comprar" una vez, los turnos siguientes que aporten zona/tipo/precio sin
+    # repetir la operación la heredan, para no mezclar venta con alquiler.
+    # RAM-only en V1.
+    sticky_operation: list[str] | None = None
+    # True una vez que el usuario completó un booking en la sesión: evita
+    # re-activar el flujo por score alto y dejar de insistir con preguntas de
+    # calificación tras agendar. RAM-only en V1.
+    booking_completed: bool = False
     created_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )

@@ -18,6 +18,7 @@ Principios:
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -53,6 +54,7 @@ from app.llm.router import get_chat_model
 from app.notification.dispatcher import dispatch_booking_notifications
 from app.qualification.score import QualificationResult, calculate_qualification_score
 from app.schemas.search import SearchResult
+from app.search.filter_extractor import extract_filters
 from app.search.hybrid import hybrid_search
 
 logger = get_logger(__name__)
@@ -69,11 +71,15 @@ BOOKING_STEPS_EN = ["name", "phone", "email", "date", "confirm"]
 # aunque el score de calificación no haya llegado al umbral.
 _BOOKING_INTENT_ES = (
     "visita", "visitar", "agendar", "agenda", "cita", "verla", "verlo",
-    "ver la propiedad", "conocer", "coordinar",
+    "ver la propiedad", "ver la casa", "ver el apartamento", "conocer",
+    "coordinar",
+    # Demostrativo singular → apunta a la propiedad en foco ("ver esa casa").
+    # Los límites de palabra evitan el plural de browse ("ver esas opciones").
+    "ver esa", "ver esta", "ver ese", "ver este",
 )
 _BOOKING_INTENT_EN = (
     "visit", "schedule", "appointment", "see the property", "see it",
-    "book a", "tour",
+    "see this", "see that", "book a", "tour",
 )
 
 # Cierre del booking — el dueño/agente se comunicará con el interesado.
@@ -88,10 +94,15 @@ _BOOKING_CLOSING_EN = (
 
 
 def _has_booking_intent(text: str, language: str) -> bool:
-    """Detecta si el usuario quiere visitar/conocer una propiedad."""
+    """Detecta si el usuario quiere visitar/conocer una propiedad.
+
+    Usa límites de palabra para no confundir el demostrativo singular
+    ("ver esa casa" → booking) con el plural de exploración ("ver esas
+    opciones" → browse), ni hacer match dentro de otra palabra.
+    """
     keywords = _BOOKING_INTENT_ES if language == "es" else _BOOKING_INTENT_EN
     low = text.lower()
-    return any(kw in low for kw in keywords)
+    return any(re.search(rf"\b{re.escape(kw)}\b", low) for kw in keywords)
 
 
 def _build_suggestions(
@@ -241,6 +252,13 @@ async def process_message(
         search_result = SearchResult(properties=[], source="no_results", total_found=0)
         logfire.info("search_skipped", reason="booking_mode", session_id=session_id)
     else:
+        # Recordar la operación (venta/arriendo) entre turnos: si ESTE mensaje la
+        # menciona ("comprar", "alquilar", …) actualizamos el slot; si no, se
+        # reusa la última conocida para no mezclar venta con alquiler.
+        turn_operation = extract_filters(user_message).property_type
+        if turn_operation:
+            memory.sticky_operation = turn_operation
+
         with logfire.span("chat.hybrid_search", session_id=session_id, query=user_message):
             try:
                 search_result = await hybrid_search(
@@ -250,6 +268,7 @@ async def process_message(
                     session_id=session_id,
                     language=language,
                     max_results=settings.max_properties_per_response,  # campo correcto de Settings
+                    sticky_operation=memory.sticky_operation,
                 )
             except Exception as exc:
                 logger.exception("hybrid_search_failed", session_id=session_id, error=str(exc))
@@ -330,6 +349,7 @@ async def process_message(
 
     # ── 8b. Persistir lead si el booking se completó ───────────
     if response_data.booking_complete:
+        memory.booking_completed = True
         with logfire.span("chat.finalize_booking", session_id=session_id):
             await _finalize_booking(
                 session=session,
@@ -387,9 +407,12 @@ async def process_message(
         is_booking_active=memory.is_booking_active,
         booking_step=memory.booking_step,
         properties_found=search_result.total_found,
-        # Mantener las cards de las propiedades en foco para que no
-        # desaparezcan en follow-ups donde la búsqueda no trae nada nuevo.
-        properties=[dict(p) for p in properties_in_focus],
+        # Cards SOLO cuando la búsqueda de este turno trajo propiedades nuevas.
+        # El foco se conserva en memory.last_properties (carry-forward) para el
+        # contexto del LLM en follow-ups, pero NO se re-emiten las cards en cada
+        # mensaje: eso saturaba la conversación repitiendo las mismas muestras
+        # en cada paso del booking, despedidas, etc.
+        properties=[dict(p) for p in properties_in_focus] if focus_is_fresh else [],
         suggestions=_build_suggestions(memory, properties_in_focus, language),
         duration_ms=round(duration_ms, 2),
         language=language,
@@ -567,7 +590,7 @@ def _assemble_response(
 
     Estados:
       - booking activo:  avanza el flujo de captura de datos
-      - intención visita: activa booking (por keyword o score >= book)
+      - intención visita: activa booking por intención EXPLÍCITA del usuario
       - qualify:         agrega pregunta de calificación si el LLM no preguntó
       - explore:         respuesta directa sin modificaciones
     """
@@ -576,11 +599,11 @@ def _assemble_response(
     if memory.is_booking_active:
         return _advance_booking_flow(memory, language, user_message)
 
-    # Activar booking flow: por intención explícita de visita o por score alto.
-    # Requiere que haya una propiedad en foco para no agendar "en el aire".
-    wants_to_book = (
-        qual_result.stage == "book" or _has_booking_intent(user_message, language)
-    )
+    # Activar booking SOLO por el flujo del usuario: intención explícita de
+    # visitar/coordinar en la conversación. Se eliminó el trigger por score
+    # (stage == "book"): dependía de un scorer frágil y no se va a mantener.
+    # Requiere una propiedad en foco para no agendar "en el aire".
+    wants_to_book = _has_booking_intent(user_message, language)
     if wants_to_book and memory.last_properties:
         memory.is_booking_active = True
         memory.booking_data = {}
@@ -591,10 +614,16 @@ def _assemble_response(
         # alucinar o re-preguntar).
         return _ResponseAssembly(final_text=get_booking_prompt(steps[0], language))
 
-    # Agregar pregunta de calificación — solo si el LLM no preguntó ya.
-    # El system prompt instruye al LLM a hacer preguntas de calificación,
-    # así que anexar siempre la del scorer duplica la pregunta.
-    if qual_result.stage == "qualify" and "?" not in response_text:
+    # Agregar pregunta de calificación — solo si el LLM no preguntó ya y el
+    # usuario aún no agendó. El system prompt instruye al LLM a hacer preguntas
+    # de calificación, así que anexar siempre la del scorer duplica la pregunta;
+    # y tras un booking, insistir con "¿cuál es tu presupuesto?" sobra (se pegaba
+    # incluso a las despedidas).
+    if (
+        qual_result.stage == "qualify"
+        and "?" not in response_text
+        and not memory.booking_completed
+    ):
         question = _get_qualification_question(qual_result, language)
         if question:
             return _ResponseAssembly(final_text=f"{response_text}\n\n{question}")

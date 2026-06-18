@@ -24,7 +24,9 @@ class SignalConfig:
 
 
 MARGARITA_ZONES = [
-    "pampatar", "porlamar", "el agua", "guacuco", "el yaque",
+    "pampatar", "porlamar", "costa azul", "playa moreno",
+    "playa el angel", "el angel", "maneiro",
+    "el agua", "guacuco", "el yaque", "playa tirano", "tirano",
     "playa caribe", "playa parguito", "manzanillo",
     "casa de campo", "country club", "paraiso", "paraíso",
     "puerto real", "santa ana del norte",

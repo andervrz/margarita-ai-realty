@@ -25,13 +25,20 @@ from app.schemas.search import FilterQuery
 # ── Zonas de Margarita ────────────────────────────────────────────
 
 MARGARITA_ZONES_CANONICAL = [
-    "pampatar", "porlamar", "el agua", "guacuco", "el yaque",
+    # Zonas CON propiedades en el catálogo. Cada canónica debe ser substring del
+    # location_zone real (el SQL filtra con ILIKE %zona%), por eso se incluyen
+    # variantes cortas: "el angel" ⊂ "Playa El Angel", "tirano" ⊂ "Playa Tirano".
+    "pampatar", "porlamar", "costa azul", "playa moreno",
+    "playa el angel", "el angel", "maneiro",
+    "el agua", "guacuco", "el yaque", "playa tirano", "tirano",
     "playa caribe", "playa parguito", "manzanillo",
-    "casa de campo", "country club", "paraíso", "paraiso",
+    "juan griego", "la asunción", "la asuncion",
+    "paraíso", "paraiso",
+    # Zonas/sectores adicionales de Margarita (sin propiedades aún, pero válidas).
+    "casa de campo", "country club",
     "puerto real", "santa ana del norte",
     "sabana de guacuco", "rancho de chana", "cerro guayamuri",
     "las hernández", "las hernandez", "chana",
-    "juan griego", "la asunción", "la asuncion",
     "margarita", "nueva esparta",
 ]
 
@@ -70,7 +77,15 @@ _OPERATION_TYPES_SET = set(OPERATION_TYPES_CANONICAL)
 _DWELLING_TYPES_SET = set(DWELLING_TYPES_CANONICAL)
 
 PROPERTY_TYPE_SYNONYMS: dict[str, str] = {
+    "comprar": "venta",
+    "compra": "venta",
+    "comprando": "venta",
+    "buy": "venta",
+    "buying": "venta",
     "alquiler": "arriendo",
+    "alquilar": "arriendo",
+    "arrendar": "arriendo",
+    "rentar": "arriendo",
     "renta": "arriendo",
     "rent": "arriendo",
     "apto": "apartamento",

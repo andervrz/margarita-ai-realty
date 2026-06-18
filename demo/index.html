@@ -459,15 +459,7 @@ function handleServerMessage(data) {
 
     // Texto principal del bot
     if (data.content) {
-        const div = addMessage(data.content, 'bot');
-
-        // Badge de booking si está activo
-        if (data.is_booking_active && data.booking_step) {
-            const badge = document.createElement('div');
-            badge.className = 'booking-badge';
-            badge.textContent = `📋 Paso: ${data.booking_step}`;
-            div.prepend(badge);
-        }
+        addMessage(data.content, 'bot');
     }
 
     // Cards de propiedades

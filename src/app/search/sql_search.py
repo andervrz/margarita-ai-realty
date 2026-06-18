@@ -163,8 +163,17 @@ async def search_properties_sql(
     if filters.tipo_especial and filters.property_type != [filters.tipo_especial]:
         stmt = stmt.where(Property.tipo_especial.ilike(f"%{filters.tipo_especial}%"))
 
-    # Ordenamiento y límite
-    stmt = stmt.order_by(Property.price_usd.asc().nullslast())
+    # Ordenamiento acorde al presupuesto (en vez de "siempre las más baratas"):
+    #   - tope dado  → de mayor a menor (las que mejor aprovechan el presupuesto,
+    #                  cercanas al tope, ya filtradas a <= max por el WHERE)
+    #   - piso dado  → de menor a mayor desde el mínimo
+    #   - sin presupuesto → orden neutral por más recientes (no sesga a lo barato)
+    if filters.max_price_usd is not None:
+        stmt = stmt.order_by(Property.price_usd.desc().nullslast())
+    elif filters.min_price_usd is not None:
+        stmt = stmt.order_by(Property.price_usd.asc().nullslast())
+    else:
+        stmt = stmt.order_by(Property.created_at.desc())
     stmt = stmt.limit(effective_limit)
 
     # Ejecución

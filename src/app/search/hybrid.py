@@ -102,6 +102,7 @@ async def hybrid_search(
     session_id: str,
     language: str = "es",
     max_results: int = 3,
+    sticky_operation: list[str] | None = None,
 ) -> SearchResult:
     """
     Orquesta búsqueda híbrida de 4 capas.
@@ -131,78 +132,35 @@ async def hybrid_search(
     # ── Capa 1: Regex (costo CERO) ────────────────────────────────
     filters = extract_filters_regex(user_query)
 
-    # ── Capa 1b: LLM fallback ─────────────────────────────────────
-    if filters.is_empty:
-        # "Ver propiedades" / "más opciones" / "muéstrame todo": explícito pero
-        # SIN criterios. No gastamos un LLM fallback ni devolvemos un top-3 por
-        # defecto (esas 3 propiedades sueltas que ensuciaban la conversación).
-        # El engine conserva el foco previo (carry-forward) y el LLM-chat guía
-        # al usuario a concretar tipo/zona/operación/precio.
-        if _has_browse_intent(user_query):
-            logger.info(
-                "browse_intent_no_filters",
-                session_id=session_id,
-                query=user_query[:80],
-            )
-            return SearchResult(
-                properties=[],
-                source="no_results",
-                total_found=0,
-                query_text=user_query,
-            )
-
-        if _should_allow_llm_fallback(session_id):
-            # Incrementar contador ANTES de llamar al LLM
-            _llm_fallback_counts[session_id] += 1
-
-            logger.info(
-                "llm_fallback_triggered",
-                session_id=session_id,
-                attempt=_llm_fallback_counts[session_id],
-            )
-
-            try:
-                filters = await extract_filters_with_llm(user_query, language=language)
-                extraction_method = "llm_fallback"
-            except LLMFilterExtractionError as e:
-                logger.warning(
-                    "llm_fallback_error",
-                    session_id=session_id,
-                    error=str(e)[:100],
-                )
-                filters = FilterQuery(raw_query=user_query, extracted_by="llm_fallback")
-                extraction_method = "llm_error"
-        else:
-            logger.warning(
-                "llm_fallback_blocked",
-                session_id=session_id,
-                total_attempts=_llm_fallback_counts[session_id],
-            )
-            return SearchResult(
-                properties=[],
-                source="llm_blocked",
-                total_found=0,
-                query_text=user_query,
-            )
+    # Heredar la operación recordada (venta/arriendo) de turnos anteriores. NO
+    # cuenta como criterio específico: por sí sola no dispara el listado.
+    if not filters.property_type and sticky_operation:
+        filters.property_type = sticky_operation
+        logger.info(
+            "sticky_operation_applied",
+            session_id=session_id,
+            operation=sticky_operation,
+        )
 
     logger.info(
         "filters_extracted",
         method=extraction_method,
-        is_empty=filters.is_empty,
+        has_specific=filters.has_specific_criteria,
         filters={
             k: v for k, v in filters.model_dump().items()
             if v is not None and k not in ("raw_query", "extracted_by")
         },
     )
 
-    # ── Gate: sin filtros estructurales → no buscar ───────────────
-    # Tras regex + LLM, si no hay ningún filtro concreto NO devolvemos un
-    # "top-3 por defecto": ensuciaba la conversación con propiedades sueltas.
-    # El engine conserva el foco previo (carry-forward). Solo se busca cuando
-    # el usuario concretó tipo/zona/operación/precio.
-    if filters.is_empty:
+    # ── Gate: solo se lista con un criterio ESPECÍFICO ────────────
+    # La operación sola (venta/arriendo) NO basta para listar — evitaba el
+    # "top-3 más baratas" arbitrario en cada turno. Y NO usamos un LLM para
+    # inventar filtros desde texto vago: si el regex no extrajo nada específico
+    # (zona/precio/habitaciones/tipo de vivienda/flags), devolvemos vacío y el
+    # chat-LLM guía al usuario a concretar. El foco previo lo conserva el engine.
+    if not filters.has_specific_criteria:
         logger.info(
-            "no_filters_skip_search",
+            "no_specific_filters_skip_search",
             session_id=session_id,
             query=user_query[:80],
         )
